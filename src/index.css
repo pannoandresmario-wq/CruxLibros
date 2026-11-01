@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --bg-page: #fafaf9;
+    --text-primary: #1c1917;
+    --text-secondary: #78716c;
+    --bg-card: #ffffff;
+    --border-subtle: #e7e5e4;
+    --highlight-active: rgba(245, 158, 11, 0.18);
+    --highlight-border: #f59e0b;
+  }
+
+  html.dark {
+    color-scheme: dark;
+    --bg-page: #0c0a09;
+    --text-primary: #f5f5f4;
+    --text-secondary: #a8a29e;
+    --bg-card: #1c1917;
+    --border-subtle: #292524;
+    --highlight-active: rgba(245, 158, 11, 0.22);
+    --highlight-border: #d97706;
+  }
+
+  html.theme-sepia {
+    color-scheme: light;
+    --bg-page: #fbf5e6;
+    --text-primary: #3b2c1d;
+    --text-secondary: #735e4b;
+    --bg-card: #f2e7d3;
+    --border-subtle: #dfd1b8;
+    --highlight-active: rgba(217, 119, 6, 0.22);
+    --highlight-border: #b45309;
+  }
+
+  body {
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+/* ================= THEME CAFÉ (SEPIA) OVERRIDES ================= */
+html.theme-sepia body,
+html.theme-sepia .bg-stone-50,
+html.theme-sepia .bg-stone-100 {
+  background-color: #fbf5e6 !important;
+}
+
+html.theme-sepia .bg-white,
+html.theme-sepia .bg-stone-50\/90,
+html.theme-sepia .bg-stone-100\/95 {
+  background-color: #f4ebd9 !important;
+}
+
+html.theme-sepia .bg-stone-200\/60,
+html.theme-sepia .bg-stone-200\/70,
+html.theme-sepia .bg-stone-200\/80 {
+  background-color: #ebdcc3 !important;
+}
+
+html.theme-sepia .text-stone-900,
+html.theme-sepia .text-stone-950,
+html.theme-sepia .text-stone-800,
+html.theme-sepia .text-stone-700 {
+  color: #382a1b !important;
+}
+
+html.theme-sepia .text-stone-500,
+html.theme-sepia .text-stone-600 {
+  color: #725e4c !important;
+}
+
+html.theme-sepia .text-stone-400 {
+  color: #8c7865 !important;
+}
+
+html.theme-sepia .border-stone-200,
+html.theme-sepia .border-stone-300,
+html.theme-sepia .border-stone-200\/70,
+html.theme-sepia .border-stone-200\/80 {
+  border-color: #dfd1b8 !important;
+}
+
+html.theme-sepia .bg-amber-500\/10 {
+  background-color: rgba(180, 83, 9, 0.16) !important;
+}
+
+/* ================= DARK MODE OVERRIDES ================= */
+html.dark body,
+html.dark .bg-stone-50 {
+  background-color: #0c0a09 !important;
+}
+
+html.dark .bg-stone-100,
+html.dark .bg-stone-100\/95,
+html.dark .bg-stone-50\/90 {
+  background-color: #171412 !important;
+}
+
+html.dark .bg-white {
+  background-color: #1c1917 !important;
+}
+
+html.dark .text-stone-900,
+html.dark .text-stone-950,
+html.dark .text-stone-800,
+html.dark .text-stone-700 {
+  color: #f5f5f4 !important;
+}
+
+html.dark .text-stone-500,
+html.dark .text-stone-600 {
+  color: #a8a29e !important;
+}
+
+html.dark .border-stone-200,
+html.dark .border-stone-300,
+html.dark .border-stone-200\/70 {
+  border-color: #292524 !important;
+}
+
+/* ================= TYPOGRAPHY & READER FONTS ================= */
+.font-reader-serif {
+  font-family: 'Lora', 'Merriweather', Georgia, serif;
+}
+
+.font-reader-sans {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.font-reader-display {
+  font-family: 'Cinzel', Georgia, serif;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.3);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 150, 150, 0.5);
+}
+
+.reading-current-paragraph {
+  position: relative;
+  transition: all 0.25s ease-in-out;
+}
+
+.reading-current-paragraph::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--highlight-border);
+  border-radius: 4px;
+}
+
+button, input, select, textarea {
+  touch-action: manipulation;
+}

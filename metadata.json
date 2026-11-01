@@ -1,0 +1,6 @@
+{
+  "name": "VoxLibris - Lector Inteligente & Resúmenes AI",
+  "description": "Lector de PDF y artículos web con voz natural en múltiples idiomas, resúmenes con IA, sincronización en la nube entre dispositivos, modo offline y diseño optimizado para tablets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
