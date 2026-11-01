@@ -471,10 +471,12 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
       }
     }
 
-    // Check server memory cache first for instant response
-    const cacheKey = `${chosenVoice}:${dynamicStyle.slice(0, 40)}:${cleanText}`;
+    // Cache key incorporates voice and MD5 of style prompt to eliminate voice cross-contamination
+    const styleHash = crypto.createHash('md5').update(dynamicStyle).digest('hex').slice(0, 10);
+    const cacheKey = `${chosenVoice}:${styleHash}:${cleanText}`;
     if (ttsAudioCache.has(cacheKey)) {
       const cached = ttsAudioCache.get(cacheKey)!;
+      res.setHeader('Content-Type', 'application/json');
       return res.json({
         audioBase64: cached.audioBase64,
         mimeType: cached.mimeType,
@@ -485,21 +487,22 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
 
     const ai = getGeminiClient();
     if (!ai) {
+      res.setHeader('Content-Type', 'application/json');
       return res.status(503).json({
         error: 'Servicio de Gemini TTS no configurado. Utilizando voz del sistema.',
         fallbackToBrowser: true,
       });
     }
 
-    // Strategy: Try gemini-3.8-flash-tts (flagship), fallback to gemini-3.8-flash-lite-tts
-    const candidateModels = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+    // Strategy: gemini-3.8-flash-lite-tts (ultra-responsive < 2s for fluid reading), fallback to gemini-3.8-flash-tts
+    const candidateModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
     let lastError: any = null;
     let base64Audio: string | null = null;
 
     for (const model of candidateModels) {
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('TTS API timeout exceeded')), 14000)
+          setTimeout(() => reject(new Error('TTS API timeout exceeded')), 12000)
         );
 
         const apiPromise = ai.models.generateContent({
@@ -531,8 +534,7 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
         base64Audio = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
         if (base64Audio) {
-          // Success! Save in cache (cap cache at 300 items)
-          if (ttsAudioCache.size > 300) {
+          if (ttsAudioCache.size > 400) {
             const firstKey = ttsAudioCache.keys().next().value;
             if (firstKey) ttsAudioCache.delete(firstKey);
           }
@@ -546,12 +548,14 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
     }
 
     if (!base64Audio) {
+      res.setHeader('Content-Type', 'application/json');
       return res.status(503).json({
         error: lastError?.message || 'Servicio de voz con IA no disponible temporalmente.',
         fallbackToBrowser: true,
       });
     }
 
+    res.setHeader('Content-Type', 'application/json');
     return res.json({
       audioBase64: base64Audio,
       mimeType: 'audio/wav',
@@ -559,6 +563,7 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
     });
   } catch (error: any) {
     console.error('Error in TTS generation endpoint:', error?.message);
+    res.setHeader('Content-Type', 'application/json');
     return res.status(500).json({
       error: 'Error al generar voz natural.',
       fallbackToBrowser: true,

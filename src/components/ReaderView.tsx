@@ -15,7 +15,9 @@ import {
   Eye,
   EyeOff,
   Filter,
-  CheckCheck
+  CheckCheck,
+  Scissors,
+  Link2
 } from 'lucide-react';
 import { DocumentItem, ReaderSettings, SentenceItem } from '../types';
 import { EditDocumentModal } from './EditDocumentModal';
@@ -39,6 +41,8 @@ interface ReaderViewProps {
   onCreateCustomSummaryFromSelected?: () => void;
   onPlayFromSaved?: () => void;
   onRestartFromBeginning?: () => void;
+  onMergeParagraphWithNext?: (paragraphIndex: number) => void;
+  onSplitParagraph?: (paragraphIndex: number, sentenceText: string) => void;
 }
 
 export const ReaderView: React.FC<ReaderViewProps> = ({
@@ -60,6 +64,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   onCreateCustomSummaryFromSelected,
   onPlayFromSaved,
   onRestartFromBeginning,
+  onMergeParagraphWithNext,
+  onSplitParagraph,
 }) => {
   const activeSentenceRef = useRef<HTMLSpanElement | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -131,94 +137,168 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     <div className="flex-1 flex flex-col h-full overflow-y-auto pb-44">
       
       {/* Top Document Header Bar */}
-      <div className="sticky top-0 z-20 bg-stone-50/90 dark:bg-stone-950/90 backdrop-blur-md border-b border-stone-200/70 dark:border-stone-800/70 px-4 py-2.5 sm:px-8">
-        <div className={`mx-auto ${getWidthClass()} flex items-center justify-between gap-3`}>
-          <div className="min-w-0">
-            <h1 className="text-sm sm:text-base font-semibold truncate text-stone-900 dark:text-stone-100 font-reader-serif">
-              {document.title}
-            </h1>
-            <div className="flex items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
+      {/* Top Document Header Bar (2-Tier Clean Layout: Zero Text Overlap) */}
+      <div className="sticky top-0 z-20 bg-stone-50/95 dark:bg-stone-950/95 backdrop-blur-md border-b border-stone-200/80 dark:border-stone-800/80 px-4 py-2.5 sm:px-8 shadow-xs">
+        <div className={`mx-auto ${getWidthClass()} flex flex-col gap-1.5`}>
+          
+          {/* Row 1: Document Title & Main Actions */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <h1 
+                className="text-sm sm:text-base font-bold truncate text-stone-900 dark:text-stone-100 font-reader-serif tracking-tight"
+                title={document.title}
+              >
+                {document.title}
+              </h1>
+            </div>
+
+            {/* Quick Reader Controls */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              
+              {/* Edit Document Button */}
+              <button
+                onClick={() => setIsEditModalOpen(true)}
+                className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-stone-200/70 dark:bg-stone-800 hover:bg-stone-300 dark:hover:bg-stone-750 text-stone-800 dark:text-stone-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Editar el título o texto del documento, reparar párrafos y saltos de línea"
+              >
+                <Edit3 className="w-3.5 h-3.5 text-amber-500" />
+                <span className="hidden sm:inline text-[11px]">Editar Cortes</span>
+              </button>
+
+              {/* Quick Download Audio button */}
+              <button
+                onClick={onOpenAudioDownloadModal}
+                className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Descargar audio con voz seleccionada o modo gaucho con guitarra"
+              >
+                <Download className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                <span className="hidden sm:inline text-[11px]">Bajar Audio</span>
+              </button>
+
+              {/* Auto-scroll toggle */}
+              <button
+                onClick={() => onUpdateSettings({ autoScroll: !settings.autoScroll })}
+                className={`p-1.5 rounded-lg border text-xs flex items-center gap-1 cursor-pointer transition-colors ${
+                  settings.autoScroll
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
+                    : 'bg-stone-100 dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-500'
+                }`}
+                title={settings.autoScroll ? 'Auto-scroll activo en cada avance' : 'Auto-scroll desactivado'}
+              >
+                <ArrowUpDown className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Font Size controls */}
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-stone-200/60 dark:bg-stone-800 text-stone-700 dark:text-stone-300 text-xs font-semibold">
+                <button
+                  onClick={() => onUpdateSettings({ fontSize: Math.max(14, settings.fontSize - 1) })}
+                  className="w-5 h-5 flex items-center justify-center rounded hover:bg-white dark:hover:bg-stone-700 cursor-pointer"
+                  title="Disminuir texto"
+                >
+                  A-
+                </button>
+                <span className="text-[11px] w-4 text-center font-mono">{settings.fontSize}</span>
+                <button
+                  onClick={() => onUpdateSettings({ fontSize: Math.min(26, settings.fontSize + 1) })}
+                  className="w-5 h-5 flex items-center justify-center rounded hover:bg-white dark:hover:bg-stone-700 cursor-pointer"
+                  title="Aumentar texto"
+                >
+                  A+
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Reading Granularity & Document Stats Bar */}
+          <div className="pt-2 border-t border-stone-200/60 dark:border-stone-800/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+            
+            {/* Left: Granularity Selector & Fluency Option */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Reading Granularity Selector: Párrafos vs Oraciones */}
+              <div className="flex items-center p-0.5 rounded-xl bg-stone-200/80 dark:bg-stone-800 border border-stone-300/70 dark:border-stone-700 text-xs">
+                <button
+                  type="button"
+                  onClick={() => onUpdateSettings({ readingGranularity: 'paragraph' })}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    settings.readingGranularity === 'paragraph'
+                      ? 'bg-amber-500 text-stone-950 shadow-xs'
+                      : 'text-stone-600 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100'
+                  }`}
+                  title="Corte por Párrafos: Lee párrafos completos continuos sin pausas artificiales (máxima fluidez y naturalidad)"
+                >
+                  <span>📖</span>
+                  <span>Párrafos (Continuo)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onUpdateSettings({ readingGranularity: 'sentence' })}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    settings.readingGranularity !== 'paragraph'
+                      ? 'bg-amber-500 text-stone-950 shadow-xs'
+                      : 'text-stone-600 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100'
+                  }`}
+                  title="Corte por Oraciones: Resalta y reproduce frase por frase"
+                >
+                  <span>🔤</span>
+                  <span>Por Oraciones</span>
+                </button>
+              </div>
+
+              {/* Smart Short-Sentence Merge Switch (when reading by sentences) */}
+              {settings.readingGranularity !== 'paragraph' && (
+                <button
+                  type="button"
+                  onClick={() => onUpdateSettings({ mergeShortSentences: !settings.mergeShortSentences })}
+                  className={`px-2.5 py-1 rounded-xl border text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                    settings.mergeShortSentences
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-900 dark:text-amber-200 font-bold'
+                      : 'bg-stone-100 dark:bg-stone-850 border-stone-200 dark:border-stone-750 text-stone-500 hover:text-stone-700'
+                  }`}
+                  title={
+                    settings.mergeShortSentences
+                      ? 'Fusión activa: Las oraciones muy cortas se unen para evitar pausas constantes y lecturas entrecortadas'
+                      : 'Fusión inactiva: Cada punto genera un corte independiente'
+                  }
+                >
+                  <span>⚡</span>
+                  <span className="text-[11px]">
+                    {settings.mergeShortSentences ? 'Frases fluidas (Activo)' : 'Unir frases cortas'}
+                  </span>
+                </button>
+              )}
+
+              {/* Selection / Exclude Mode Toggle */}
+              <button
+                onClick={() => setIsSelectionMode(!isSelectionMode)}
+                className={`p-1 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  isSelectionMode
+                    ? 'bg-amber-500/20 border-amber-500/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-500/40'
+                    : 'bg-stone-100 dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:bg-stone-200/60'
+                }`}
+                title="Modo para seleccionar u omitir oraciones específicas de la lectura"
+              >
+                <Filter className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-[11px]">
+                  {isSelectionMode ? 'Listo (Modo Omitir)' : 'Omitir partes'}
+                </span>
+              </button>
+            </div>
+
+            {/* Right: Document Reading Stats */}
+            <div className="flex items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400 font-medium">
               <span>{sentences.length} oraciones</span>
               <span>•</span>
-              <span className="text-amber-600 dark:text-amber-400 font-medium">
-                {activeSentencesCount} activas ({excludedSentencesCount > 0 ? `${excludedSentencesCount} omitidas` : 'completo'})
+              <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                {activeSentencesCount} activas
+                {excludedSentencesCount > 0 ? ` (${excludedSentencesCount} omitidas)` : ''}
               </span>
               <span>•</span>
               <span>{document.wordCount.toLocaleString()} palabras</span>
             </div>
+
           </div>
 
-          {/* Quick Reader Controls */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            
-            {/* Edit Document Button */}
-            <button
-              onClick={() => setIsEditModalOpen(true)}
-              className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-stone-200/70 dark:bg-stone-800 hover:bg-stone-300 dark:hover:bg-stone-750 text-stone-800 dark:text-stone-200 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-              title="Editar el título o texto del documento y reparar errores"
-            >
-              <Edit3 className="w-3.5 h-3.5 text-amber-500" />
-              <span className="hidden sm:inline text-[11px]">Editar Texto</span>
-            </button>
-
-            {/* Selection / Exclude Mode Toggle */}
-            <button
-              onClick={() => setIsSelectionMode(!isSelectionMode)}
-              className={`p-1.5 sm:px-2.5 sm:py-1 rounded-lg border text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                isSelectionMode
-                  ? 'bg-amber-500/20 border-amber-500/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-500/40'
-                  : 'bg-stone-100 dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:bg-stone-200/60'
-              }`}
-              title="Modo para seleccionar u omitir oraciones específicas de la lectura"
-            >
-              <Filter className="w-3.5 h-3.5 text-amber-500" />
-              <span className="hidden sm:inline text-[11px]">
-                {isSelectionMode ? 'Finalizar Selección' : 'Seleccionar / Omitir'}
-              </span>
-            </button>
-
-            {/* Quick Download Audio button */}
-            <button
-              onClick={onOpenAudioDownloadModal}
-              className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-              title="Descargar audio con voz seleccionada o modo gaucho con guitarra"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden md:inline text-[11px]">Bajar Audio</span>
-            </button>
-
-            {/* Auto-scroll toggle */}
-            <button
-              onClick={() => onUpdateSettings({ autoScroll: !settings.autoScroll })}
-              className={`p-1.5 rounded-lg border text-xs flex items-center gap-1 cursor-pointer transition-colors ${
-                settings.autoScroll
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
-                  : 'bg-stone-100 dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-500'
-              }`}
-              title={settings.autoScroll ? 'Auto-scroll activo en cada oración' : 'Auto-scroll desactivado'}
-            >
-              <ArrowUpDown className="w-3.5 h-3.5" />
-            </button>
-
-            {/* Font Size controls */}
-            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-stone-200/60 dark:bg-stone-800 text-stone-700 dark:text-stone-300 text-xs font-semibold">
-              <button
-                onClick={() => onUpdateSettings({ fontSize: Math.max(14, settings.fontSize - 1) })}
-                className="w-5 h-5 flex items-center justify-center rounded hover:bg-white dark:hover:bg-stone-700 cursor-pointer"
-                title="Disminuir texto"
-              >
-                A-
-              </button>
-              <span className="text-[11px] w-4 text-center font-mono">{settings.fontSize}</span>
-              <button
-                onClick={() => onUpdateSettings({ fontSize: Math.min(26, settings.fontSize + 1) })}
-                className="w-5 h-5 flex items-center justify-center rounded hover:bg-white dark:hover:bg-stone-700 cursor-pointer"
-                title="Aumentar texto"
-              >
-                A+
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -408,6 +488,18 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1">
+                    {/* Merge with next paragraph button */}
+                    {onMergeParagraphWithNext && pIdx < document.paragraphs.length - 1 && (
+                      <button
+                        onClick={() => onMergeParagraphWithNext(pIdx)}
+                        className="px-2 py-0.5 rounded text-[11px] font-medium text-stone-500 hover:text-stone-900 dark:hover:text-stone-100 hover:bg-stone-200/80 dark:hover:bg-stone-800 transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Unir este párrafo con el siguiente para una lectura más continua y sin cortes"
+                      >
+                        <Link2 className="w-3 h-3 text-amber-500" />
+                        <span className="hidden sm:inline">Unir con siguiente</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => onToggleBookmark(pIdx)}
                       className={`p-1 rounded cursor-pointer ${
@@ -454,7 +546,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                             ? isExcluded ? 'Toca para incluir en la lectura' : 'Toca para omitir de la lectura'
                             : isExcluded
                             ? 'Oración omitida (toca para reproducir e incluir)'
-                            : 'Toca para escuchar desde esta oración'
+                            : settings.readingGranularity === 'paragraph'
+                            ? 'Toca para escuchar este párrafo completo'
+                            : 'Toca para escuchar desde esta frase'
                         }
                       >
                         {/* Checkbox badge when in selection mode */}
@@ -469,6 +563,20 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                         )}
 
                         {sentence.text}
+
+                        {/* Quick hover action: Split paragraph at this sentence */}
+                        {!isSelectionMode && onSplitParagraph && paragraphSentences.length > 1 && (
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSplitParagraph(pIdx, sentence.text);
+                            }}
+                            className="hidden group-hover/sentence:inline-flex items-center ml-1 p-0.5 rounded bg-stone-200 dark:bg-stone-800 text-stone-500 hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer align-middle"
+                            title="Dividir el párrafo en dos a partir de esta frase"
+                          >
+                            <Scissors className="w-3 h-3" />
+                          </span>
+                        )}
 
                         {/* Quick hover exclude toggle button (visible on hover) */}
                         {!isSelectionMode && (

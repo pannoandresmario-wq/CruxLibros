@@ -60,6 +60,7 @@ export interface ReaderSettings {
   guitarVolume: number; // 0.0 to 1.0 (default 0.35)
   guitarTempo: number; // 45 to 110 BPM (default 70)
   readingGranularity: 'sentence' | 'paragraph';
+  mergeShortSentences: boolean;
 }
 
 export interface CloudSyncVault {

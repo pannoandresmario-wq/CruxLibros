@@ -90,21 +90,83 @@ export const EditDocumentModal: React.FC<EditDocumentModalProps> = ({
             />
           </div>
 
-          {/* Quick Repair Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs">
-            <div className="flex items-center gap-1.5 text-stone-700 dark:text-stone-300">
-              <Wand2 className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-              <span>Herramientas automáticas de texto:</span>
+          {/* Quick Repair & Cut Adjustment Toolbar */}
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-semibold text-stone-800 dark:text-stone-200">
+                <Wand2 className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>Ajuste automático de cortes y párrafos:</span>
+              </div>
+              {hasRepaired && (
+                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                  ¡Ajustes aplicados correctamente!
+                </span>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={handleRepairText}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold transition-all cursor-pointer shadow-xs"
-              title="Une palabras partidas por guiones de fin de línea en PDFs y elimina caracteres invisibles"
-            >
-              <Wand2 className="w-3.5 h-3.5" />
-              <span>{hasRepaired ? '¡Texto Reparado!' : 'Corregir Guiones y Separaciones'}</span>
-            </button>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleRepairText}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold transition-all cursor-pointer shadow-xs"
+                title="Une palabras partidas por guiones de fin de línea en PDFs y elimina caracteres invisibles"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>Corregir Guiones y Salto PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  // Merge overly short single-line paragraphs into natural paragraphs
+                  const rawParagraphs = content.split(/\n\s*\n/);
+                  const mergedParagraphs: string[] = [];
+                  let currentP = '';
+
+                  for (const p of rawParagraphs) {
+                    const trimmed = p.trim();
+                    if (!trimmed) continue;
+                    if (!currentP) {
+                      currentP = trimmed;
+                    } else if (currentP.length < 180 || currentP.split(/\s+/).length < 25) {
+                      // Join short preceding paragraph
+                      currentP = `${currentP} ${trimmed}`;
+                    } else {
+                      mergedParagraphs.push(currentP);
+                      currentP = trimmed;
+                    }
+                  }
+                  if (currentP) mergedParagraphs.push(currentP);
+
+                  setContent(mergedParagraphs.join('\n\n'));
+                  setHasRepaired(true);
+                  setTimeout(() => setHasRepaired(false), 3000);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-stone-200 dark:bg-stone-800 hover:bg-stone-300 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 font-medium transition-all cursor-pointer border border-stone-300 dark:border-stone-700"
+                title="Combina párrafos de 1 o 2 líneas en bloques continuos para que la voz no se corte"
+              >
+                <span>🔗 Unir párrafos muy cortos</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  // Normalize double line breaks
+                  const normalized = content
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .replace(/([^\n])\n([^\n])/g, '$1 $2') // fix broken soft wraps
+                    .trim();
+                  setContent(normalized);
+                  setHasRepaired(true);
+                  setTimeout(() => setHasRepaired(false), 3000);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-stone-200 dark:bg-stone-800 hover:bg-stone-300 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 font-medium transition-all cursor-pointer border border-stone-300 dark:border-stone-700"
+                title="Limpia saltos de línea irregulares para una lectura totalmente fluida"
+              >
+                <span>Limpiar saltos de línea</span>
+              </button>
+            </div>
           </div>
 
           {/* Content Textarea */}

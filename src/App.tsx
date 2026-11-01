@@ -25,7 +25,7 @@ import {
 import { SpeechEngine, SpeechStatus } from './utils/speechEngine';
 import { buildDocumentSentences } from './utils/sentenceSegmenter';
 import { repairDocumentText, splitIntoCleanParagraphs } from './utils/textRepair';
-import { BookOpen, Plus, Sparkles, FolderUp } from 'lucide-react';
+import { BookOpen, Plus, Sparkles, FolderUp, AlertTriangle, X } from 'lucide-react';
 
 const DEFAULT_SETTINGS: ReaderSettings = {
   theme: 'light',
@@ -45,6 +45,7 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   guitarVolume: 0.35,
   guitarTempo: 70,
   readingGranularity: 'sentence',
+  mergeShortSentences: true,
 };
 
 export default function App() {
@@ -114,16 +115,22 @@ export default function App() {
     return documents.find((doc) => doc.id === activeDocumentId) || null;
   }, [documents, activeDocumentId]);
 
-  // Document Sentences Segmentation
+  // Document Sentences / Paragraphs Segmentation based on granularity settings
   const sentences = useMemo(() => {
     if (!activeDocument || !activeDocument.paragraphs) return [];
-    return buildDocumentSentences(activeDocument.paragraphs, activeDocument.excludedSentenceIds || []);
-  }, [activeDocument]);
+    return buildDocumentSentences(
+      activeDocument.paragraphs,
+      activeDocument.excludedSentenceIds || [],
+      settings.readingGranularity || 'sentence',
+      settings.mergeShortSentences ?? true
+    );
+  }, [activeDocument, settings.readingGranularity, settings.mergeShortSentences]);
 
   const currentSentenceIndex = activeDocument?.currentSentenceIndex ?? 0;
 
   // 8. Speech Engine & Audio state
   const [speechStatus, setSpeechStatus] = useState<SpeechStatus>('stopped');
+  const [voiceErrorMessage, setVoiceErrorMessage] = useState<string | null>(null);
   const speechEngineRef = useRef<SpeechEngine | null>(null);
   const handleSentenceProgressRef = useRef<(idx: number) => void>(() => {});
 
@@ -136,6 +143,7 @@ export default function App() {
       },
       onError: (msg) => {
         console.warn('Speech engine message:', msg);
+        setVoiceErrorMessage(msg);
       },
     });
 
@@ -152,7 +160,10 @@ export default function App() {
       speechEngineRef.current.updateCallbacks({
         onStatusChange: (status) => setSpeechStatus(status),
         onSentenceChange: (idx) => handleSentenceProgressRef.current(idx),
-        onError: (msg) => console.warn('Speech engine message:', msg),
+        onError: (msg) => {
+          console.warn('Speech engine message:', msg);
+          setVoiceErrorMessage(msg);
+        },
       });
     }
   });
@@ -265,15 +276,17 @@ export default function App() {
   handleSentenceProgressRef.current = handleSentenceProgress;
 
   // Playback control handlers: starts reading from the remembered sentence position
-  const handlePlay = () => {
+  const handlePlay = (fromIdx?: number) => {
     if (!speechEngineRef.current || !activeDocument) return;
+    setVoiceErrorMessage(null);
     speechEngineRef.current.unlockAudio();
-    const targetIdx = activeDocument.currentSentenceIndex ?? 0;
+    const targetIdx = fromIdx !== undefined ? fromIdx : (activeDocument.currentSentenceIndex ?? 0);
     speechEngineRef.current.play(targetIdx);
   };
 
   const handleRestartDocument = () => {
     if (!activeDocumentId || !speechEngineRef.current) return;
+    setVoiceErrorMessage(null);
     speechEngineRef.current.stop();
     handleSentenceProgress(0);
     if (sentences.length > 0) {
@@ -282,34 +295,71 @@ export default function App() {
   };
 
   const handleSelectVoice = (voice: ReaderSettings['geminiVoice']) => {
+    setVoiceErrorMessage(null);
     const updatedSettings: ReaderSettings = {
       ...settings,
       geminiVoice: voice,
       voiceEngine: 'gemini',
       voiceStyleMode: 'standard',
+      guitarAccompaniment: false,
     };
     setSettings(updatedSettings);
     if (speechEngineRef.current) {
       speechEngineRef.current.unlockAudio();
       speechEngineRef.current.updateSettings(updatedSettings);
-      speechEngineRef.current.play(currentSentenceIndex);
     }
   };
 
   const handleToggleGaucho = () => {
+    setVoiceErrorMessage(null);
     const nextGaucho = settings.voiceStyleMode !== 'gaucho';
     const updatedSettings: ReaderSettings = {
       ...settings,
       voiceStyleMode: nextGaucho ? 'gaucho' : 'standard',
-      guitarAccompaniment: nextGaucho ? true : settings.guitarAccompaniment,
+      guitarAccompaniment: nextGaucho,
       geminiVoice: 'Fenrir',
+      voiceEngine: 'gemini',
     };
     setSettings(updatedSettings);
     if (speechEngineRef.current) {
       speechEngineRef.current.unlockAudio();
       speechEngineRef.current.updateSettings(updatedSettings);
-      speechEngineRef.current.play(currentSentenceIndex);
     }
+  };
+
+  // Merge a paragraph with the following one to create smoother reading blocks
+  const handleMergeParagraphWithNext = (paragraphIndex: number) => {
+    if (!activeDocumentId || !activeDocument) return;
+    if (paragraphIndex >= activeDocument.paragraphs.length - 1) return;
+
+    const p = [...activeDocument.paragraphs];
+    const mergedText = `${p[paragraphIndex]} ${p[paragraphIndex + 1]}`.trim();
+    p.splice(paragraphIndex, 2, mergedText);
+
+    const fullContent = p.join('\n\n');
+    handleSaveEditedDocument(activeDocument.title, fullContent);
+  };
+
+  // Divide / split a paragraph at a specific sentence boundary
+  const handleSplitParagraph = (paragraphIndex: number, sentenceTextToSplitAfter: string) => {
+    if (!activeDocumentId || !activeDocument) return;
+    const currentP = activeDocument.paragraphs[paragraphIndex];
+    if (!currentP) return;
+
+    const splitIdx = currentP.indexOf(sentenceTextToSplitAfter);
+    if (splitIdx === -1) return;
+
+    const splitPoint = splitIdx + sentenceTextToSplitAfter.length;
+    const part1 = currentP.slice(0, splitPoint).trim();
+    const part2 = currentP.slice(splitPoint).trim();
+
+    if (!part1 || !part2) return;
+
+    const p = [...activeDocument.paragraphs];
+    p.splice(paragraphIndex, 1, part1, part2);
+
+    const fullContent = p.join('\n\n');
+    handleSaveEditedDocument(activeDocument.title, fullContent);
   };
 
   const handleSaveEditedDocument = (newTitle: string, newContent: string) => {
@@ -562,6 +612,8 @@ export default function App() {
               onBatchExcludeSentences={handleBatchExcludeSentences}
               onPlayFromSaved={handlePlay}
               onRestartFromBeginning={handleRestartDocument}
+              onMergeParagraphWithNext={handleMergeParagraphWithNext}
+              onSplitParagraph={handleSplitParagraph}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto">
@@ -586,6 +638,39 @@ export default function App() {
         </main>
 
       </div>
+
+      {/* Voice Error Notification Banner */}
+      {voiceErrorMessage && (
+        <div className="fixed bottom-24 sm:bottom-28 left-1/2 -translate-x-1/2 z-50 max-w-lg w-[92%] bg-stone-900/98 border border-amber-500/60 text-stone-100 p-3.5 rounded-2xl shadow-2xl backdrop-blur-xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h5 className="text-xs font-bold text-amber-300">Aviso del Sistema de Voz</h5>
+              <p className="text-[11px] text-stone-300 leading-snug">{voiceErrorMessage}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                setVoiceErrorMessage(null);
+                handlePlay();
+              }}
+              className="px-3 py-1.5 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 cursor-pointer shadow-xs transition-colors"
+            >
+              Reintentar
+            </button>
+            <button
+              onClick={() => setVoiceErrorMessage(null)}
+              className="p-1.5 text-stone-400 hover:text-stone-100 rounded-lg hover:bg-stone-800 cursor-pointer transition-colors"
+              aria-label="Cerrar aviso"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 3. Audio Player Bottom Dock */}
       {activeDocument && (

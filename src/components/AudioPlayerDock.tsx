@@ -15,7 +15,8 @@ import {
   Loader2,
   Zap,
   Music,
-  Download
+  Download,
+  X
 } from 'lucide-react';
 import { ReaderSettings } from '../types';
 
@@ -104,8 +105,19 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
   const currentVolumePercent = Math.round(settings.voiceVolume * 100);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 pointer-events-none p-2 sm:p-4">
-      <div className="max-w-3xl mx-auto bg-stone-900/95 text-stone-100 rounded-2xl shadow-2xl border border-stone-800 backdrop-blur-xl pointer-events-auto transition-all overflow-hidden">
+    <>
+      {/* Backdrop overlay: clicking anywhere on the screen/book closes the drawer */}
+      {isExpanded && (
+        <div 
+          className="fixed inset-0 z-35 bg-stone-950/60 backdrop-blur-xs transition-opacity cursor-pointer pointer-events-auto"
+          onClick={() => setIsExpanded(false)}
+          title="Toca para cerrar el menú de configuración"
+          aria-label="Cerrar menú de configuración"
+        />
+      )}
+
+      <div className={`fixed bottom-0 left-0 right-0 ${isExpanded ? 'z-40' : 'z-30'} pointer-events-none p-2 sm:p-4`}>
+        <div className="max-w-3xl mx-auto bg-stone-900/98 text-stone-100 rounded-2xl shadow-2xl border border-stone-800 backdrop-blur-xl pointer-events-auto transition-all overflow-hidden flex flex-col">
         
         {/* Progress Bar (Clickable & Scrubbable by sentences) */}
         <div 
@@ -236,6 +248,26 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
           {/* Right: Download Audio Button & Quick Settings */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             
+            {/* Quick Granularity Toggle (Párrafos vs Oraciones) */}
+            <button
+              onClick={() => onUpdateSettings({ readingGranularity: settings.readingGranularity === 'paragraph' ? 'sentence' : 'paragraph' })}
+              className={`p-2 rounded-xl border text-xs flex items-center gap-1.5 cursor-pointer transition-all ${
+                settings.readingGranularity === 'paragraph'
+                  ? 'bg-amber-500/25 border-amber-500/50 text-amber-300 font-bold'
+                  : 'bg-stone-800 border-stone-700 text-stone-400 hover:text-stone-200'
+              }`}
+              title={
+                settings.readingGranularity === 'paragraph'
+                  ? 'Modo Párrafo Activo: Lectura continua sin pausas entre oraciones cortas (clic para cambiar a oraciones)'
+                  : 'Modo Oración Activo: Frase a frase (clic para cambiar a párrafos continuos)'
+              }
+            >
+              <span>{settings.readingGranularity === 'paragraph' ? '📖' : '🔤'}</span>
+              <span className="hidden md:inline text-[11px]">
+                {settings.readingGranularity === 'paragraph' ? 'Párrafos' : 'Oraciones'}
+              </span>
+            </button>
+
             {/* Quick Gaucho toggle button */}
             <button
               onClick={() => {
@@ -247,6 +279,7 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                     voiceStyleMode: nextGaucho ? 'gaucho' : 'standard',
                     guitarAccompaniment: nextGaucho ? true : settings.guitarAccompaniment,
                     geminiVoice: 'Fenrir',
+                    voiceEngine: 'gemini',
                   });
                 }
               }}
@@ -286,134 +319,213 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
           </div>
         </div>
 
-        {/* Expandable Voice & Guitar Settings Panel */}
+        {/* Expandable Voice & Guitar Settings Panel with fixed max-height and close button */}
         {isExpanded && (
-          <div className="p-4 sm:p-5 border-t border-stone-800 bg-stone-950/90 space-y-4">
-            
-            {/* 1. Modo Gaucho Payador & Guitarra Criolla Section */}
-            <div className="p-3 sm:p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">🤠</span>
-                  <div>
-                    <h4 className="text-xs font-bold text-amber-300">
-                      Modo Gaucho Payador Criollo & Punteo de Guitarra
-                    </h4>
-                    <p className="text-[11px] text-stone-300">
-                      Simula el canto y recitado de versos camperos con bordoneo de guitarra en vivo.
-                    </p>
+          <div className="flex flex-col max-h-[70vh] sm:max-h-[74vh] border-t border-stone-800 bg-stone-950/95 overflow-hidden">
+            {/* Sticky Header with prominent close X button */}
+            <div className="sticky top-0 z-10 px-4 py-2.5 bg-stone-900 border-b border-stone-800 flex items-center justify-between shadow-xs shrink-0">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-amber-400" />
+                <span className="text-xs sm:text-sm font-bold text-stone-100">
+                  Configuración de Voz, Modo Gaucho y Lectura
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExpanded(false)}
+                className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                title="Cerrar menú (o toca en la pantalla del libro)"
+                aria-label="Cerrar menú"
+              >
+                <span className="text-[11px] text-stone-400">Cerrar</span>
+                <X className="w-4 h-4 text-amber-400" />
+              </button>
+            </div>
+
+            {/* Scrollable Container with max height protection */}
+            <div className="overflow-y-auto p-4 sm:p-5 space-y-4 overscroll-contain">
+              
+              {/* 1. Modo Gaucho Payador & Guitarra Criolla Section */}
+              <div className="p-3 sm:p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">🤠</span>
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-300">
+                        Modo Gaucho Payador Criollo & Punteo de Guitarra
+                      </h4>
+                      <p className="text-[11px] text-stone-300">
+                        {settings.voiceStyleMode === 'gaucho'
+                          ? 'Voz campera profunda con bordoneo de milonga en vivo.'
+                          : 'Simula el canto y recitado de versos camperos con bordoneo de guitarra criolla en vivo.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onToggleGaucho) {
+                          onToggleGaucho();
+                        } else {
+                          const next = settings.voiceStyleMode !== 'gaucho';
+                          onUpdateSettings({ 
+                            voiceStyleMode: next ? 'gaucho' : 'standard',
+                            guitarAccompaniment: next,
+                            geminiVoice: 'Fenrir',
+                          });
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        settings.voiceStyleMode === 'gaucho'
+                          ? 'bg-amber-500 text-stone-950 shadow-xs'
+                          : 'bg-stone-800 text-stone-300 hover:bg-stone-700'
+                      }`}
+                    >
+                      {settings.voiceStyleMode === 'gaucho' ? 'Activado (Modo Gaucho)' : 'Activar Modo Gaucho'}
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                {/* Guitar volume & tempo controls - ONLY visible and active when in Gaucho mode */}
+                {settings.voiceStyleMode === 'gaucho' ? (
+                  <div className="pt-2 border-t border-amber-500/20 space-y-2.5 text-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 font-semibold text-amber-300">
+                        <Music className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Punteo de Guitarra Criolla (Bordoneo de Milonga):</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-stone-400">Volumen Punteo:</span>
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="0.8"
+                          step="0.05"
+                          value={settings.guitarVolume}
+                          onChange={(e) => onUpdateSettings({ guitarVolume: parseFloat(e.target.value) })}
+                          className="accent-amber-500 w-24 sm:w-32 cursor-pointer"
+                        />
+                        <span className="text-[11px] font-mono font-bold text-amber-400 w-8 text-right">
+                          {Math.round(settings.guitarVolume * 100)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Guitar Tempo / Rhythm (BPM) Slider */}
+                    <div className="pt-2 border-t border-amber-500/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-amber-300 font-semibold">Ritmo / Tempo de la Guitarra:</span>
+                        <span className="font-mono text-[11px] text-amber-400 font-bold bg-amber-500/20 px-1.5 py-0.5 rounded">
+                          {settings.guitarTempo || 70} BPM
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="45"
+                          max="115"
+                          step="5"
+                          value={settings.guitarTempo || 70}
+                          onChange={(e) => onUpdateSettings({ guitarTempo: parseInt(e.target.value, 10) })}
+                          className="accent-amber-500 w-28 sm:w-36 cursor-pointer"
+                          title="Ajustar tempo del punteo de guitarra"
+                        />
+                        <div className="flex items-center gap-1">
+                          {[
+                            { label: 'Lento (55)', bpm: 55 },
+                            { label: 'Normal (70)', bpm: 70 },
+                            { label: 'Vivo (95)', bpm: 95 },
+                          ].map((p) => (
+                            <button
+                              key={p.bpm}
+                              type="button"
+                              onClick={() => onUpdateSettings({ guitarTempo: p.bpm })}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono transition-colors cursor-pointer ${
+                                (settings.guitarTempo || 70) === p.bpm
+                                  ? 'bg-amber-500 text-stone-950 font-bold'
+                                  : 'bg-stone-800 text-stone-300 hover:bg-stone-750'
+                              }`}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-stone-400 italic pt-1 border-t border-amber-500/20">
+                    * El acompañamiento de guitarra criolla está reservado exclusivamente para el Modo Payador Gaucho.
+                  </p>
+                )}
+              </div>
+
+            {/* 2. Reading Cut & Granularity Mode Section */}
+            <div className="p-3 sm:p-3.5 rounded-xl bg-stone-900 border border-stone-800 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div>
+                  <h4 className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <span>✂️</span>
+                    <span>Modo de Corte y Fluidez de Lectura</span>
+                  </h4>
+                  <p className="text-[11px] text-stone-300 mt-0.5">
+                    Elige entre lectura de párrafos enteros de corrido o por oraciones, evitando cortes molestos en frases breves.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1 p-0.5 rounded-xl bg-stone-800 border border-stone-700 shrink-0">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (onToggleGaucho) {
-                        onToggleGaucho();
-                      } else {
-                        const next = settings.voiceStyleMode !== 'gaucho';
-                        onUpdateSettings({ 
-                          voiceStyleMode: next ? 'gaucho' : 'standard',
-                          guitarAccompaniment: next ? true : settings.guitarAccompaniment,
-                          geminiVoice: 'Fenrir',
-                        });
-                      }
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      settings.voiceStyleMode === 'gaucho'
+                    onClick={() => onUpdateSettings({ readingGranularity: 'paragraph' })}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      settings.readingGranularity === 'paragraph'
                         ? 'bg-amber-500 text-stone-950 shadow-xs'
-                        : 'bg-stone-800 text-stone-300 hover:bg-stone-700'
+                        : 'text-stone-300 hover:text-stone-100'
                     }`}
                   >
-                    {settings.voiceStyleMode === 'gaucho' ? 'Activado' : 'Activar Modo Gaucho'}
+                    <span>📖</span>
+                    <span>Párrafos (Continuo)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ readingGranularity: 'sentence' })}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      settings.readingGranularity !== 'paragraph'
+                        ? 'bg-amber-500 text-stone-950 shadow-xs'
+                        : 'text-stone-300 hover:text-stone-100'
+                    }`}
+                  >
+                    <span>🔤</span>
+                    <span>Por Oraciones</span>
                   </button>
                 </div>
               </div>
 
-              {/* Guitar volume & tempo controls */}
-              <div className="pt-2 border-t border-amber-500/20 space-y-2.5 text-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <label 
-                    htmlFor="dock-guitar-check"
-                    className="flex items-center gap-2 font-semibold text-stone-200 cursor-pointer"
-                  >
+              {settings.readingGranularity !== 'paragraph' && (
+                <div className="pt-2 border-t border-stone-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <label htmlFor="dock-merge-short-check" className="flex items-center gap-2 text-stone-300 cursor-pointer">
                     <input
-                      id="dock-guitar-check"
+                      id="dock-merge-short-check"
                       type="checkbox"
-                      checked={settings.guitarAccompaniment || settings.voiceStyleMode === 'gaucho'}
-                      onChange={(e) => onUpdateSettings({ guitarAccompaniment: e.target.checked })}
+                      checked={settings.mergeShortSentences}
+                      onChange={(e) => onUpdateSettings({ mergeShortSentences: e.target.checked })}
                       className="accent-amber-500 w-4 h-4 cursor-pointer"
                     />
-                    <Music className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Acompañamiento de Guitarra (Punteo de Milonga)</span>
+                    <span>Unir oraciones cortas automáticamente (evita pausas constantes y lecturas entrecortadas)</span>
                   </label>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-stone-400">Volumen Punteo:</span>
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="0.8"
-                      step="0.05"
-                      value={settings.guitarVolume}
-                      onChange={(e) => onUpdateSettings({ guitarVolume: parseFloat(e.target.value) })}
-                      className="accent-amber-500 w-24 sm:w-32 cursor-pointer"
-                    />
-                    <span className="text-[11px] font-mono font-bold text-amber-400 w-8 text-right">
-                      {Math.round(settings.guitarVolume * 100)}%
-                    </span>
-                  </div>
+                  <span className="text-[10px] text-amber-400 font-bold bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30 shrink-0">
+                    Recomendado para fluidez
+                  </span>
                 </div>
-
-                {/* Guitar Tempo / Rhythm (BPM) Slider */}
-                {(settings.guitarAccompaniment || settings.voiceStyleMode === 'gaucho') && (
-                  <div className="pt-2 border-t border-amber-500/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-amber-300 font-semibold">Ritmo / Tempo de la Guitarra:</span>
-                      <span className="font-mono text-[11px] text-amber-400 font-bold bg-amber-500/20 px-1.5 py-0.5 rounded">
-                        {settings.guitarTempo || 70} BPM
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="range"
-                        min="45"
-                        max="115"
-                        step="5"
-                        value={settings.guitarTempo || 70}
-                        onChange={(e) => onUpdateSettings({ guitarTempo: parseInt(e.target.value, 10) })}
-                        className="accent-amber-500 w-28 sm:w-36 cursor-pointer"
-                        title="Ajustar tempo del punteo de guitarra"
-                      />
-                      <div className="flex items-center gap-1">
-                        {[
-                          { label: 'Lento (55)', bpm: 55 },
-                          { label: 'Normal (70)', bpm: 70 },
-                          { label: 'Vivo (95)', bpm: 95 },
-                        ].map((p) => (
-                          <button
-                            key={p.bpm}
-                            type="button"
-                            onClick={() => onUpdateSettings({ guitarTempo: p.bpm })}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-mono transition-colors cursor-pointer ${
-                              (settings.guitarTempo || 70) === p.bpm
-                                ? 'bg-amber-500 text-stone-950 font-bold'
-                                : 'bg-stone-800 text-stone-300 hover:bg-stone-750'
-                            }`}
-                          >
-                            {p.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
 
-            {/* 2. ALL Voices: Natural Gemini Voices (ALWAYS VISIBLE) */}
+            {/* 3. ALL Voices: Natural Gemini Voices (ALWAYS VISIBLE) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-stone-300">
                 <div className="flex items-center gap-1.5 font-semibold">
@@ -430,7 +542,7 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                       if (onSelectVoice) {
                         onSelectVoice(v.id);
                       } else {
-                        onUpdateSettings({ geminiVoice: v.id, voiceEngine: 'gemini', voiceStyleMode: 'standard' });
+                        onUpdateSettings({ geminiVoice: v.id, voiceEngine: 'gemini', voiceStyleMode: 'standard', guitarAccompaniment: false });
                       }
                     }}
                     className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
@@ -576,10 +688,13 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
               </div>
             </div>
 
+            {/* End of scrollable container */}
+            </div>
           </div>
         )}
 
       </div>
     </div>
+  </>
   );
 };

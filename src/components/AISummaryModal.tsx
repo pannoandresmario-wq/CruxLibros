@@ -67,9 +67,21 @@ export const AISummaryModal: React.FC<AISummaryModalProps> = ({
         }),
       });
 
+      const contentType = response.headers.get('content-type') || '';
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `Error HTTP ${response.status}`);
+        let msg = `Error HTTP ${response.status}`;
+        if (contentType.includes('application/json')) {
+          const err = await response.json().catch(() => ({}));
+          msg = err.error || msg;
+        } else {
+          const text = await response.text().catch(() => '');
+          msg = text.slice(0, 80) || msg;
+        }
+        throw new Error(msg);
+      }
+
+      if (!contentType.includes('application/json')) {
+        throw new Error('Respuesta no válida del servidor.');
       }
 
       const data = await response.json();

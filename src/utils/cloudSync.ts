@@ -101,9 +101,18 @@ export async function pushToCloudVault(
     }),
   });
 
+  const contentType = response.headers.get('content-type') || '';
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || `Error al sincronizar con la nube (HTTP ${response.status})`);
+    let msg = `Error al sincronizar con la nube (HTTP ${response.status})`;
+    if (contentType.includes('application/json')) {
+      const err = await response.json().catch(() => ({}));
+      msg = err.error || msg;
+    }
+    throw new Error(msg);
+  }
+
+  if (!contentType.includes('application/json')) {
+    throw new Error('Respuesta inválida del servidor de sincronización.');
   }
 
   return response.json();
@@ -119,9 +128,19 @@ export async function pullFromCloudVault(
 }> {
   const cleanCode = encodeURIComponent(syncCode.trim().toUpperCase());
   const response = await fetch(`/api/sync/${cleanCode}`);
+  const contentType = response.headers.get('content-type') || '';
+
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'No se encontró la bóveda en la nube con este código.');
+    let msg = 'No se encontró la bóveda en la nube con este código.';
+    if (contentType.includes('application/json')) {
+      const err = await response.json().catch(() => ({}));
+      msg = err.error || msg;
+    }
+    throw new Error(msg);
+  }
+
+  if (!contentType.includes('application/json')) {
+    throw new Error('Respuesta inválida del servidor.');
   }
 
   const data = await response.json();

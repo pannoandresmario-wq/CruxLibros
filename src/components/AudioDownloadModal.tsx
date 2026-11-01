@@ -41,6 +41,18 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Sync state with current reader settings when modal opens
+  React.useEffect(() => {
+    if (isOpen) {
+      setSelectedVoice(settings.geminiVoice);
+      setIsGauchoMode(settings.voiceStyleMode === 'gaucho');
+      setIncludeGuitar(settings.guitarAccompaniment || settings.voiceStyleMode === 'gaucho');
+      setGuitarVolume(settings.guitarVolume || 0.35);
+      setGuitarTempo(settings.guitarTempo || 70);
+      setErrorMsg(null);
+    }
+  }, [isOpen, settings]);
+
   if (!isOpen) return null;
 
   const currentSentence = sentences[currentSentenceIndex];
@@ -83,7 +95,7 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
         textToExport,
         selectedVoice,
         isGauchoMode,
-        includeGuitar,
+        isGauchoMode && includeGuitar,
         guitarVolume,
         guitarTempo,
         (_current, _total, msg) => {
@@ -287,64 +299,70 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
             )}
           </div>
 
-          {/* 3. Guitar Accompaniment Setting */}
-          <div className="p-3 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-850 space-y-2">
-            <div className="flex items-center justify-between">
-              <label 
-                htmlFor="guitar-toggle" 
-                className="flex items-center gap-2 text-xs font-bold text-stone-800 dark:text-stone-200 cursor-pointer"
-              >
-                <Music className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <span>Punteo de Guitarra Criolla de Fondo</span>
-              </label>
-              <input
-                id="guitar-toggle"
-                type="checkbox"
-                checked={includeGuitar}
-                onChange={(e) => setIncludeGuitar(e.target.checked)}
-                className="accent-amber-500 w-4 h-4 cursor-pointer"
-              />
-            </div>
-            <p className="text-[11px] text-stone-500 dark:text-stone-400">
-              Añade el clásico bordoneo arpegiado de milonga pampeana sincronizado debajo de la voz.
-            </p>
-
-            {includeGuitar && (
-              <div className="pt-2 border-t border-stone-200 dark:border-stone-750 space-y-2">
-                <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="text-[11px] text-stone-500">Volumen Guitarra:</span>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="0.8"
-                    step="0.05"
-                    value={guitarVolume}
-                    onChange={(e) => setGuitarVolume(parseFloat(e.target.value))}
-                    className="accent-amber-500 flex-1 cursor-pointer"
-                  />
-                  <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 font-bold w-10 text-right">
-                    {Math.round(guitarVolume * 100)}%
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 text-xs pt-1 border-t border-stone-200/50 dark:border-stone-800">
-                  <span className="text-[11px] text-stone-500">Ritmo / Tempo:</span>
-                  <input
-                    type="range"
-                    min="45"
-                    max="115"
-                    step="5"
-                    value={guitarTempo}
-                    onChange={(e) => setGuitarTempo(parseInt(e.target.value, 10))}
-                    className="accent-amber-500 flex-1 cursor-pointer"
-                  />
-                  <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 font-bold w-16 text-right">
-                    {guitarTempo} BPM
-                  </span>
-                </div>
+          {/* 3. Guitar Accompaniment Setting (Strictly for Gaucho Mode) */}
+          {isGauchoMode ? (
+            <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 space-y-2">
+              <div className="flex items-center justify-between">
+                <label 
+                  htmlFor="guitar-toggle" 
+                  className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200 cursor-pointer"
+                >
+                  <Music className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>Punteo de Guitarra Criolla (Bordoneo Gaucho)</span>
+                </label>
+                <input
+                  id="guitar-toggle"
+                  type="checkbox"
+                  checked={includeGuitar}
+                  onChange={(e) => setIncludeGuitar(e.target.checked)}
+                  className="accent-amber-500 w-4 h-4 cursor-pointer"
+                />
               </div>
-            )}
-          </div>
+              <p className="text-[11px] text-stone-600 dark:text-stone-300">
+                Añade el clásico bordoneo arpegiado de milonga pampeana sincronizado debajo de la voz.
+              </p>
+
+              {includeGuitar && (
+                <div className="pt-2 border-t border-amber-500/20 space-y-2">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="text-[11px] text-stone-500 dark:text-stone-400">Volumen Guitarra:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="0.8"
+                      step="0.05"
+                      value={guitarVolume}
+                      onChange={(e) => setGuitarVolume(parseFloat(e.target.value))}
+                      className="accent-amber-500 flex-1 cursor-pointer"
+                    />
+                    <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 font-bold w-10 text-right">
+                      {Math.round(guitarVolume * 100)}%
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 text-xs pt-1 border-t border-amber-500/15">
+                    <span className="text-[11px] text-stone-500 dark:text-stone-400">Ritmo / Tempo:</span>
+                    <input
+                      type="range"
+                      min="45"
+                      max="115"
+                      step="5"
+                      value={guitarTempo}
+                      onChange={(e) => setGuitarTempo(parseInt(e.target.value, 10))}
+                      className="accent-amber-500 flex-1 cursor-pointer"
+                    />
+                    <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 font-bold w-16 text-right">
+                      {guitarTempo} BPM
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-3 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-850 text-xs text-stone-500 dark:text-stone-400">
+              * El punteo de guitarra criolla solo se activa en <strong>Modo Gaucho Payador</strong>. Activa el modo arriba si deseas exportar el audio con guitarra.
+            </div>
+          )}
 
           {/* Text preview snippet */}
           <div className="p-3 rounded-xl bg-stone-100 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700/60 space-y-1">

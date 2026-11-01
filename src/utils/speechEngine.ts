@@ -29,6 +29,7 @@ export class SpeechEngine {
   private abortController: AbortController | null = null;
   private isCancelled: boolean = false;
   private isPrebuffering: Set<number> = new Set();
+  private playGenerationId: number = 0;
 
   // Gaucho Guitar Accompaniment
   private guitarAccompanist: GauchoGuitarAccompanist | null = null;
@@ -104,19 +105,17 @@ export class SpeechEngine {
       this.currentAudioElement.volume = Math.min(1, newSettings.voiceVolume);
     }
 
-    // 2. Guitar volume & tempo update
+    // 2. Guitar volume & tempo update (Guitar strictly only in Gaucho mode)
     if (this.guitarAccompanist) {
       this.guitarAccompanist.setVolume(newSettings.guitarVolume ?? 0.35);
       if (newSettings.guitarTempo) {
         this.guitarAccompanist.setTempo(newSettings.guitarTempo);
       }
-      const shouldPlayGuitar =
-        (newSettings.voiceStyleMode === 'gaucho' || newSettings.guitarAccompaniment) &&
-        this.status === 'playing';
+      const shouldPlayGuitar = (newSettings.voiceStyleMode === 'gaucho') && this.status === 'playing';
 
       if (shouldPlayGuitar) {
         this.guitarAccompanist.start();
-      } else if (!newSettings.guitarAccompaniment && newSettings.voiceStyleMode !== 'gaucho') {
+      } else {
         this.guitarAccompanist.stop();
       }
     }
@@ -132,6 +131,12 @@ export class SpeechEngine {
 
     if (voiceChanged) {
       this.audioCache.clear();
+      this.isPrebuffering.clear();
+      this.stopPlaybackOnly();
+      if (this.synthesis) {
+        this.clearChromeKeepAlive();
+        this.synthesis.cancel();
+      }
       if (this.status === 'playing' || this.status === 'buffering') {
         this.play(this.currentSentenceIndex);
       }
@@ -151,6 +156,7 @@ export class SpeechEngine {
     this.sentences = sentences;
     this.currentSentenceIndex = Math.max(0, Math.min(startIndex, Math.max(0, sentences.length - 1)));
     this.audioCache.clear();
+    this.isPrebuffering.clear();
   }
 
   public getCurrentSentenceIndex(): number {
@@ -164,6 +170,13 @@ export class SpeechEngine {
   public async play(fromIndex?: number) {
     this.unlockAudio();
     this.isCancelled = false;
+    this.playGenerationId++;
+    const currentGeneration = this.playGenerationId;
+
+    if (this.synthesis) {
+      this.clearChromeKeepAlive();
+      this.synthesis.cancel();
+    }
 
     if (this.sentences.length === 0) {
       console.warn('SpeechEngine: No sentences loaded');
@@ -210,9 +223,11 @@ export class SpeechEngine {
     this.setStatus('buffering');
     this.callbacks.onSentenceChange?.(this.currentSentenceIndex);
 
-    // Start guitar if in Gaucho mode or guitar accompaniment is enabled
-    if (this.settings.voiceStyleMode === 'gaucho' || this.settings.guitarAccompaniment) {
+    // Start guitar strictly only when in Gaucho mode
+    if (this.settings.voiceStyleMode === 'gaucho') {
       this.guitarAccompanist?.start();
+    } else {
+      this.guitarAccompanist?.stop();
     }
 
     const currentSentence = this.sentences[this.currentSentenceIndex];
@@ -257,8 +272,10 @@ export class SpeechEngine {
 
     if (this.status !== 'paused') return;
 
-    if (this.settings.voiceStyleMode === 'gaucho' || this.settings.guitarAccompaniment) {
+    if (this.settings.voiceStyleMode === 'gaucho') {
       this.guitarAccompanist?.start();
+    } else {
+      this.guitarAccompanist?.stop();
     }
 
     if (this.settings.voiceEngine === 'gemini') {
@@ -537,6 +554,7 @@ export class SpeechEngine {
 
   // --- Gemini Natural Voice TTS with Generous Timeout & Seamless Continuation ---
   private async playGeminiTTS(text: string, index: number) {
+    const currentGeneration = this.playGenerationId;
     this.abortController = new AbortController();
 
     const isGaucho = this.settings.voiceStyleMode === 'gaucho';
@@ -544,12 +562,12 @@ export class SpeechEngine {
     const stylePrompt = this.getStylePrompt(voiceToUse, this.settings.voiceStyleMode);
     const cacheKey = `${index}_${voiceToUse}_${this.settings.voiceStyleMode}`;
 
-    // Generous synthesis timeout (15s): allows natural AI model generation without prematurely switching voices
+    // Synthesis timeout (14s)
     const fetchTimeoutTimer = setTimeout(() => {
-      if (this.abortController) {
+      if (this.abortController && this.playGenerationId === currentGeneration) {
         this.abortController.abort();
       }
-    }, 15000);
+    }, 14000);
 
     try {
       let audioBase64 = this.audioCache.get(cacheKey);
@@ -568,15 +586,24 @@ export class SpeechEngine {
 
         clearTimeout(fetchTimeoutTimer);
 
-        if (this.isCancelled) return;
+        if (this.isCancelled || this.playGenerationId !== currentGeneration) return;
 
+        const contentType = response.headers.get('content-type') || '';
         if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error || `Error del servidor HTTP ${response.status}`);
+          let errMsg = `Error del servidor HTTP ${response.status}`;
+          if (contentType.includes('application/json')) {
+            const errData = await response.json().catch(() => null);
+            if (errData?.error) errMsg = errData.error;
+          }
+          throw new Error(errMsg);
+        }
+
+        if (!contentType.includes('application/json')) {
+          throw new Error('Respuesta del servidor no es JSON');
         }
 
         const data = await response.json();
-        audioBase64 = data.audioBase64;
+        audioBase64 = data?.audioBase64;
         if (audioBase64) {
           this.audioCache.set(cacheKey, audioBase64);
         }
@@ -584,7 +611,7 @@ export class SpeechEngine {
         clearTimeout(fetchTimeoutTimer);
       }
 
-      if (this.isCancelled) return;
+      if (this.isCancelled || this.playGenerationId !== currentGeneration) return;
 
       if (!audioBase64) {
         throw new Error('No se recibió audio válido');
@@ -622,7 +649,7 @@ export class SpeechEngine {
       }
 
       audio.onplay = () => {
-        if (this.isCancelled) {
+        if (this.isCancelled || this.playGenerationId !== currentGeneration) {
           audio.pause();
           return;
         }
@@ -632,39 +659,45 @@ export class SpeechEngine {
       };
 
       audio.onended = () => {
-        if (this.status === 'playing' && !this.isCancelled) {
+        if (this.status === 'playing' && !this.isCancelled && this.playGenerationId === currentGeneration) {
           this.next();
         }
       };
 
       audio.onerror = () => {
-        if (this.isCancelled) return;
-        console.warn('Audio element error, attempting fallback for this sentence:', text.slice(0, 40));
-        this.playBrowserTTS(text);
+        if (this.isCancelled || this.playGenerationId !== currentGeneration) return;
+        console.warn('Audio playback error on sentence:', text.slice(0, 40));
+        this.stopPlaybackOnly();
+        this.setStatus('paused');
+        this.callbacks.onError?.('Ocurrió un error con la voz seleccionada. Por favor, intenta nuevamente o cambia de voz.');
       };
 
-      if (!this.isCancelled && this.status !== 'paused') {
+      if (!this.isCancelled && this.status !== 'paused' && this.playGenerationId === currentGeneration) {
         try {
           await audio.play();
           this.setStatus('playing');
           this.prebufferPipelined(index + 1, 2);
-        } catch (playErr) {
-          console.warn('HTMLAudio play rejected, falling back to browser speech:', playErr);
-          this.playBrowserTTS(text);
+        } catch (playErr: any) {
+          if (playErr?.name === 'AbortError' || this.isCancelled || this.playGenerationId !== currentGeneration) {
+            return;
+          }
+          console.warn('HTMLAudio play rejected:', playErr);
+          this.stopPlaybackOnly();
+          this.setStatus('paused');
+          this.callbacks.onError?.('Ocurrió un error con la voz seleccionada. Por favor, intenta nuevamente o cambia de voz.');
         }
       }
     } catch (err: any) {
       clearTimeout(fetchTimeoutTimer);
-      if (err.name === 'AbortError' || this.isCancelled) {
-        if (!this.isCancelled) {
-          // Timeout occurred: temporarily use browser speech for this single sentence
-          this.playBrowserTTS(text);
-        }
+      if (this.isCancelled || this.playGenerationId !== currentGeneration || err?.name === 'AbortError') {
+        // Cancelled or superseded: silently discard
         return;
       }
 
-      console.warn('Gemini TTS temporary notice, fallback for this sentence:', err?.message);
-      this.playBrowserTTS(text);
+      console.warn('Gemini TTS error:', err?.message);
+      this.stopPlaybackOnly();
+      this.setStatus('paused');
+      this.callbacks.onError?.('Ocurrió un error con la voz seleccionada. Por favor, intenta nuevamente o cambia de voz.');
     }
   }
 
@@ -816,22 +849,60 @@ export class SpeechEngine {
         onProgress(i + 1, chunks.length, `Sintetizando locución: parte ${i + 1} de ${chunks.length}...`);
       }
 
-      const response = await fetch('/api/gemini/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: chunkText,
-          voice: voiceToUse,
-          style: stylePrompt,
-        }),
-      });
+      let data: any = null;
+      let lastErrMessage = '';
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `Fallo al generar audio en parte ${i + 1}.`);
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const response = await fetch('/api/gemini/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: chunkText,
+              voice: voiceToUse,
+              style: stylePrompt,
+            }),
+          });
+
+          const contentType = response.headers.get('content-type') || '';
+          if (!response.ok) {
+            if (contentType.includes('application/json')) {
+              const err = await response.json().catch(() => ({}));
+              lastErrMessage = err.error || `Error del servidor HTTP ${response.status}`;
+            } else {
+              const errText = await response.text().catch(() => '');
+              lastErrMessage = `Error de servidor (${response.status}): ${errText.slice(0, 80)}`;
+            }
+            if (attempt === 1) {
+              await new Promise((r) => setTimeout(r, 800));
+              continue;
+            }
+            throw new Error(lastErrMessage);
+          }
+
+          if (!contentType.includes('application/json')) {
+            throw new Error('Respuesta no válida del servidor (no es JSON).');
+          }
+
+          data = await response.json();
+          if (data?.audioBase64) {
+            break;
+          } else {
+            throw new Error('No se recibió audio válido');
+          }
+        } catch (fetchErr: any) {
+          lastErrMessage = fetchErr.message || 'Error de conexión';
+          if (attempt === 2) {
+            throw new Error(lastErrMessage || `Fallo al generar audio en parte ${i + 1}.`);
+          }
+          await new Promise((r) => setTimeout(r, 800));
+        }
       }
 
-      const data = await response.json();
+      if (!data?.audioBase64) {
+        throw new Error(lastErrMessage || `Fallo al generar audio en parte ${i + 1}.`);
+      }
+
       const binary = atob(data.audioBase64);
       const chunkBytes = new Uint8Array(binary.length);
       for (let j = 0; j < binary.length; j++) {
@@ -896,7 +967,7 @@ export class SpeechEngine {
 
     const fullVoiceBlob = new Blob([wavBuffer], { type: 'audio/wav' });
 
-    if (includeGuitar || isGauchoMode) {
+    if (isGauchoMode && includeGuitar) {
       if (onProgress) {
         onProgress(chunks.length, chunks.length, 'Componiendo y mezclando punteo de guitarra criolla...');
       }
