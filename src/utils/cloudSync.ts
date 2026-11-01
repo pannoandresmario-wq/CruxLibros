@@ -89,7 +89,8 @@ export async function pushToCloudVault(
     };
   }
 
-  const response = await fetch(`/api/sync/${syncCode}`, {
+  const cleanCode = encodeURIComponent(syncCode.trim().toUpperCase());
+  const response = await fetch(`/api/sync/${cleanCode}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -116,7 +117,8 @@ export async function pullFromCloudVault(
   preferences: Partial<ReaderSettings>;
   updatedAt: string;
 }> {
-  const response = await fetch(`/api/sync/${syncCode}`);
+  const cleanCode = encodeURIComponent(syncCode.trim().toUpperCase());
+  const response = await fetch(`/api/sync/${cleanCode}`);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || 'No se encontró la bóveda en la nube con este código.');

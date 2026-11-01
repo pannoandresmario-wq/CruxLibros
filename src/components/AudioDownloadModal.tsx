@@ -61,8 +61,8 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
         return currentSummary || currentParagraph;
       case 'full':
       default:
-        // For unary TTS, slice to reasonable audio chapter size (first 1400 chars)
-        return document.content.slice(0, 1400);
+        // Export the complete, unbroken document text
+        return document.content;
     }
   };
 
@@ -76,20 +76,19 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
 
     setErrorMsg(null);
     setIsGenerating(true);
-    setProgressMsg('Sintetizando voz con Inteligencia Artificial...');
+    setProgressMsg('Iniciando síntesis de locución...');
 
     try {
-      if (includeGuitar || isGauchoMode) {
-        setProgressMsg('Generando locución y componiendo punteo de guitarra criolla...');
-      }
-
       const blob = await SpeechEngine.generateFullAudioWAV(
         textToExport,
         selectedVoice,
         isGauchoMode,
         includeGuitar,
         guitarVolume,
-        guitarTempo
+        guitarTempo,
+        (_current, _total, msg) => {
+          setProgressMsg(msg);
+        }
       );
 
       setProgressMsg('Preparando archivo para descarga...');

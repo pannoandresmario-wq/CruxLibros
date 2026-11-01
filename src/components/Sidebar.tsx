@@ -149,9 +149,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                   {/* Metadata and Reading Progress */}
                   <div className="mt-2 flex items-center justify-between text-[11px] text-stone-500 dark:text-stone-400">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      ~{doc.readingTimeMinutes} min
+                    <span className="flex items-center gap-1 font-mono text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                      <span>Párrafo {(doc.currentParagraphIndex ?? 0) + 1}/{doc.paragraphs?.length || 1}</span>
                     </span>
                     <span className="font-mono">
                       {doc.percentRead}% leído

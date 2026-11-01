@@ -125,13 +125,14 @@ export default function App() {
   // 8. Speech Engine & Audio state
   const [speechStatus, setSpeechStatus] = useState<SpeechStatus>('stopped');
   const speechEngineRef = useRef<SpeechEngine | null>(null);
+  const handleSentenceProgressRef = useRef<(idx: number) => void>(() => {});
 
   // Initialize SpeechEngine
   useEffect(() => {
     const engine = new SpeechEngine(settings, {
       onStatusChange: (status) => setSpeechStatus(status),
       onSentenceChange: (idx) => {
-        handleSentenceProgress(idx);
+        handleSentenceProgressRef.current(idx);
       },
       onError: (msg) => {
         console.warn('Speech engine message:', msg);
@@ -144,6 +145,17 @@ export default function App() {
       engine.stop();
     };
   }, []);
+
+  // Synchronize callbacks on every render to eliminate stale closures
+  useEffect(() => {
+    if (speechEngineRef.current) {
+      speechEngineRef.current.updateCallbacks({
+        onStatusChange: (status) => setSpeechStatus(status),
+        onSentenceChange: (idx) => handleSentenceProgressRef.current(idx),
+        onError: (msg) => console.warn('Speech engine message:', msg),
+      });
+    }
+  });
 
   // Update speech engine when settings change
   useEffect(() => {
@@ -176,7 +188,8 @@ export default function App() {
   // Update speech engine sentences when active document or sentences change
   useEffect(() => {
     if (activeDocument && speechEngineRef.current && sentences.length > 0) {
-      speechEngineRef.current.setSentences(sentences, activeDocument.currentSentenceIndex || 0);
+      const savedIndex = activeDocument.currentSentenceIndex || 0;
+      speechEngineRef.current.setSentences(sentences, savedIndex);
     }
     saveLocalActiveDocId(activeDocumentId);
   }, [activeDocumentId, sentences]);
@@ -219,7 +232,7 @@ export default function App() {
     [isOnline, syncVault.syncCode, settings]
   );
 
-  // Update reading progress by sentence
+  // Update reading progress by sentence with immediate persistence and paragraph indexing
   const handleSentenceProgress = useCallback(
     (newSentenceIndex: number) => {
       if (!activeDocumentId) return;
@@ -228,7 +241,7 @@ export default function App() {
         const next = prev.map((doc) => {
           if (doc.id !== activeDocumentId) return doc;
           const matchingSentence = sentences[newSentenceIndex];
-          const newParagraphIndex = matchingSentence ? matchingSentence.paragraphIndex : 0;
+          const newParagraphIndex = matchingSentence ? matchingSentence.paragraphIndex : (doc.currentParagraphIndex ?? 0);
           const total = sentences.length;
           const percent = total > 0 ? Math.round(((newSentenceIndex + 1) / total) * 100) : 0;
 
@@ -241,6 +254,7 @@ export default function App() {
           };
         });
 
+        saveLocalDocuments(next);
         triggerCloudSyncPush(next, activeDocumentId);
         return next;
       });
@@ -248,14 +262,54 @@ export default function App() {
     [activeDocumentId, sentences, triggerCloudSyncPush]
   );
 
-  // Playback control handlers
+  handleSentenceProgressRef.current = handleSentenceProgress;
+
+  // Playback control handlers: starts reading from the remembered sentence position
   const handlePlay = () => {
     if (!speechEngineRef.current || !activeDocument) return;
     speechEngineRef.current.unlockAudio();
+    const targetIdx = activeDocument.currentSentenceIndex ?? 0;
+    speechEngineRef.current.play(targetIdx);
+  };
+
+  const handleRestartDocument = () => {
+    if (!activeDocumentId || !speechEngineRef.current) return;
+    speechEngineRef.current.stop();
+    handleSentenceProgress(0);
     if (sentences.length > 0) {
-      speechEngineRef.current.setSentences(sentences, currentSentenceIndex);
+      speechEngineRef.current.setSentences(sentences, 0);
     }
-    speechEngineRef.current.play(currentSentenceIndex);
+  };
+
+  const handleSelectVoice = (voice: ReaderSettings['geminiVoice']) => {
+    const updatedSettings: ReaderSettings = {
+      ...settings,
+      geminiVoice: voice,
+      voiceEngine: 'gemini',
+      voiceStyleMode: 'standard',
+    };
+    setSettings(updatedSettings);
+    if (speechEngineRef.current) {
+      speechEngineRef.current.unlockAudio();
+      speechEngineRef.current.updateSettings(updatedSettings);
+      speechEngineRef.current.play(currentSentenceIndex);
+    }
+  };
+
+  const handleToggleGaucho = () => {
+    const nextGaucho = settings.voiceStyleMode !== 'gaucho';
+    const updatedSettings: ReaderSettings = {
+      ...settings,
+      voiceStyleMode: nextGaucho ? 'gaucho' : 'standard',
+      guitarAccompaniment: nextGaucho ? true : settings.guitarAccompaniment,
+      geminiVoice: 'Fenrir',
+    };
+    setSettings(updatedSettings);
+    if (speechEngineRef.current) {
+      speechEngineRef.current.unlockAudio();
+      speechEngineRef.current.updateSettings(updatedSettings);
+      speechEngineRef.current.play(currentSentenceIndex);
+    }
   };
 
   const handleSaveEditedDocument = (newTitle: string, newContent: string) => {
@@ -506,6 +560,8 @@ export default function App() {
               onSaveEditedDocument={handleSaveEditedDocument}
               onToggleExcludeSentence={handleToggleExcludeSentence}
               onBatchExcludeSentences={handleBatchExcludeSentences}
+              onPlayFromSaved={handlePlay}
+              onRestartFromBeginning={handleRestartDocument}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto">
@@ -538,6 +594,8 @@ export default function App() {
           isBuffering={speechStatus === 'buffering'}
           currentSentenceIndex={currentSentenceIndex}
           totalSentences={sentences.length}
+          currentParagraphIndex={activeDocument.currentParagraphIndex ?? 0}
+          totalParagraphs={activeDocument.paragraphs?.length ?? 1}
           onPlay={handlePlay}
           onPause={handlePause}
           onNext={handleNext}
@@ -548,6 +606,8 @@ export default function App() {
           onUpdateSettings={(newSettings) => setSettings((s) => ({ ...s, ...newSettings }))}
           onOpenAudioDownloadModal={() => setAudioDownloadModalOpen(true)}
           isOnline={isOnline}
+          onSelectVoice={handleSelectVoice}
+          onToggleGaucho={handleToggleGaucho}
         />
       )}
 

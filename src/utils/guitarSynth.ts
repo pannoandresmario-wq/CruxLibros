@@ -1,17 +1,19 @@
 /**
- * High-Fidelity Argentine Gaucho Guitar Punteo & Bordoneo Synthesizer
- * (Milonga Campera / Payada Pampeana)
+ * High-Fidelity Argentine Gaucho Guitar Synthesizer (Guitarra Criolla de Nylon)
+ * Authentic Milonga Campera & Payada Pampeana Bordoneo & Punteo
  *
- * Implements physical acoustic nylon string synthesis with:
- * - Fleshy thumb/finger plucking impulse excitation
- * - Frequency-dependent string loss & wood bridge coupling
- * - Guitar body cavity resonance (Helmholtz ~104 Hz, Soundboard ~212 Hz)
- * - Dynamic tempo / rhythm scaling (45 BPM to 110 BPM)
- * - Real-time playback and studio-grade offline audio mixing for WAV export.
+ * Implements physical acoustic modeling of classical nylon strings:
+ * - Two-stage fleshy finger/nail plucking excitation
+ * - Pick-position comb filter (striking at 1/7 string length for authentic acoustic twang)
+ * - Frequency-dependent string damping (Jaffe-Smith Karplus-Strong waveguide)
+ * - Wooden acoustic body filter bank (Helmholtz 105Hz, Soundboard 215Hz & 430Hz)
+ * - Natural stereo soundstage and dynamic humanized milonga campera rhythm.
  */
 
+// Precise concert pitches for standard guitar tuning (E A D G B E)
 const GUITAR_FREQS: Record<string, number> = {
   E2: 82.41,
+  F2: 87.31,
   G2: 98.0,
   A2: 110.0,
   B2: 123.47,
@@ -22,139 +24,177 @@ const GUITAR_FREQS: Record<string, number> = {
   G3: 196.0,
   A3: 220.0,
   B3: 246.94,
+  C4: 261.63,
   D4: 293.66,
   E4: 329.63,
 };
 
 interface PluckEvent {
-  beat: number; // in musical beats (0 to 8)
+  beat: number; // In beats within loop
   note: string;
   velocity: number;
-  stringIndex: number; // 0 for bass strings (E2/A2/D3), 1 for treble strings
+  stringIndex: number; // 0 for bass strings (E2/A2/D3), 1 for treble strings (G3/B3/E4)
+  durationSec?: number;
 }
 
-// Authentic Milonga Campera / Payada bordoneo pattern in 8 beats
+// Authentic Milonga Campera / Payada bordoneo pattern in 8 beats (syncopated 3+3+2 criollo rhythm)
 const MILONGA_BEATS_LOOP: PluckEvent[] = [
-  // Measure 1: Deep woody bordoneo
-  { beat: 0.0, note: 'E2', velocity: 0.95, stringIndex: 0 },
-  { beat: 0.75, note: 'B2', velocity: 0.70, stringIndex: 0 },
-  { beat: 1.5, note: 'E3', velocity: 0.78, stringIndex: 1 },
-  { beat: 2.1, note: 'G3', velocity: 0.65, stringIndex: 1 },
-  { beat: 2.85, note: 'B3', velocity: 0.75, stringIndex: 1 },
-  { beat: 3.65, note: 'E4', velocity: 0.70, stringIndex: 1 },
+  // Compás 1: Bordoneo hondo con pulgar en cuerda grave (E2) y contestación en Si/Mi
+  { beat: 0.0, note: 'E2', velocity: 0.95, stringIndex: 0, durationSec: 2.8 },
+  { beat: 0.75, note: 'B2', velocity: 0.70, stringIndex: 0, durationSec: 1.8 },
+  { beat: 1.5, note: 'G3', velocity: 0.72, stringIndex: 1, durationSec: 1.5 },
+  { beat: 2.15, note: 'B3', velocity: 0.68, stringIndex: 1, durationSec: 1.4 },
+  { beat: 2.9, note: 'E3', velocity: 0.74, stringIndex: 1, durationSec: 1.6 },
+  { beat: 3.65, note: 'E4', velocity: 0.65, stringIndex: 1, durationSec: 1.3 },
 
-  // Measure 2: Melodic criollo walk
-  { beat: 4.4, note: 'B2', velocity: 0.72, stringIndex: 0 },
-  { beat: 5.1, note: 'G3', velocity: 0.68, stringIndex: 1 },
-  { beat: 5.8, note: 'D3', velocity: 0.82, stringIndex: 0 },
-  { beat: 6.5, note: 'A2', velocity: 0.90, stringIndex: 0 },
-  { beat: 7.2, note: 'C3', velocity: 0.75, stringIndex: 0 },
-  { beat: 7.8, note: 'E3', velocity: 0.70, stringIndex: 1 },
+  // Compás 2: Caminata criolla campera con bordona en La (A2) y acorde de Mi menor
+  { beat: 4.4, note: 'A2', velocity: 0.90, stringIndex: 0, durationSec: 2.6 },
+  { beat: 5.15, note: 'C3', velocity: 0.75, stringIndex: 0, durationSec: 1.7 },
+  { beat: 5.85, note: 'E3', velocity: 0.78, stringIndex: 1, durationSec: 1.5 },
+  { beat: 6.55, note: 'A3', velocity: 0.82, stringIndex: 1, durationSec: 1.5 },
+  { beat: 7.25, note: 'C4', velocity: 0.70, stringIndex: 1, durationSec: 1.4 },
+  { beat: 7.95, note: 'B3', velocity: 0.76, stringIndex: 1, durationSec: 1.8 },
 
-  // Measure 3: Syncopated bordoneo finish
-  { beat: 8.6, note: 'A2', velocity: 0.92, stringIndex: 0 },
-  { beat: 9.3, note: 'E3', velocity: 0.68, stringIndex: 1 },
-  { beat: 10.0, note: 'A3', velocity: 0.80, stringIndex: 1 },
-  { beat: 10.7, note: 'C3', velocity: 0.65, stringIndex: 0 },
-  { beat: 11.4, note: 'B2', velocity: 0.88, stringIndex: 0 },
-  { beat: 12.1, note: 'F3', velocity: 0.70, stringIndex: 1 },
-  { beat: 12.8, note: 'B3', velocity: 0.80, stringIndex: 1 },
-  { beat: 13.5, note: 'E3', velocity: 0.65, stringIndex: 1 },
-  { beat: 14.2, note: 'E2', velocity: 0.95, stringIndex: 0 },
+  // Compás 3: Síncopa tradicional de payada (Si7 cadencial resolviendo a Mi menor)
+  { beat: 8.75, note: 'B2', velocity: 0.92, stringIndex: 0, durationSec: 2.6 },
+  { beat: 9.45, note: 'D3', velocity: 0.74, stringIndex: 0, durationSec: 1.6 },
+  { beat: 10.15, note: 'F3', velocity: 0.70, stringIndex: 1, durationSec: 1.5 },
+  { beat: 10.85, note: 'A3', velocity: 0.78, stringIndex: 1, durationSec: 1.5 },
+  { beat: 11.55, note: 'B3', velocity: 0.85, stringIndex: 1, durationSec: 1.8 },
+  { beat: 12.3, note: 'E3', velocity: 0.70, stringIndex: 1, durationSec: 1.6 },
+  { beat: 13.1, note: 'B2', velocity: 0.75, stringIndex: 0, durationSec: 1.8 },
+  { beat: 13.9, note: 'E2', velocity: 0.98, stringIndex: 0, durationSec: 3.2 },
 ];
 
-const BASE_TOTAL_BEATS = 15.0;
+const BASE_TOTAL_BEATS = 14.8;
 
 /**
- * Creates high-fidelity realistic plucked nylon acoustic guitar sound.
+ * Creates an authentic, warm acoustic nylon guitar sample using physical modeling.
  */
 function createRealisticGuitarSample(
   audioCtx: BaseAudioContext,
   freq: number,
-  duration: number = 2.6,
+  duration: number = 2.5,
   velocity: number = 0.8,
   isBassString: boolean = false
 ): AudioBuffer {
   const sampleRate = audioCtx.sampleRate;
-  const numSamples = Math.floor(sampleRate * duration);
+  const numSamples = Math.floor(sampleRate * Math.max(1.2, duration));
   const buffer = audioCtx.createBuffer(2, numSamples, sampleRate);
   const left = buffer.getChannelData(0);
   const right = buffer.getChannelData(1);
 
-  const period = Math.floor(sampleRate / freq);
-  const excitation = new Float32Array(period);
+  // Fundamental period in samples
+  const period = Math.max(16, Math.floor(sampleRate / freq));
+  const pickPos = Math.max(2, Math.floor(period / 7)); // Pluck at ~1/7 string length
 
-  // Soft fleshy finger pluck excitation (combination of triangular pulse and warm noise)
+  // 1. Dual-stage plucking excitation (soft flesh contact + nail friction)
+  const excitation = new Float32Array(period);
   for (let i = 0; i < period; i++) {
     const phase = i / period;
-    // Harmonic pluck profile
-    const triangle = 1.0 - 2.0 * Math.abs(phase - 0.5);
-    const noise = (Math.random() * 2 - 1) * 0.35;
-    const fleshDamp = Math.sin(phase * Math.PI);
-    excitation[i] = (triangle * 0.65 + noise) * fleshDamp * velocity;
+    // Fleshy thumb/finger contact (asymmetric warm displacement)
+    const displacement = Math.sin(phase * Math.PI);
+    // Nail transient click (initial fast impulse)
+    const nailTransient = i < 8 ? (1 - i / 8) * (Math.random() * 0.4 - 0.2) : 0;
+    // Low-pass filtered finger noise
+    const frictionNoise = (Math.random() * 2 - 1) * 0.15 * Math.sin(phase * Math.PI * 0.5);
+
+    excitation[i] = (displacement * 0.85 + nailTransient + frictionNoise) * velocity;
   }
 
-  // Karplus-Strong string loss simulation with acoustic guitar wood resonance
-  const decayFactor = isBassString
-    ? 0.993 - (freq / 6000) * 0.03 // Bass strings ring with warm acoustic sustain
-    : 0.987 - (freq / 3500) * 0.04;
+  // 2. Pick position comb filter: y_exc[n] = exc[n] - exc[n - pickPos]
+  const combExcitation = new Float32Array(period);
+  for (let i = 0; i < period; i++) {
+    const delayed = i >= pickPos ? excitation[i - pickPos] : 0;
+    combExcitation[i] = excitation[i] - 0.7 * delayed;
+  }
 
-  let yPrev1 = 0;
-  let yPrev2 = 0;
+  // 3. Karplus-Strong string loss loop with nylon frequency decay
+  const delayLine = new Float32Array(period);
+  for (let i = 0; i < period; i++) {
+    delayLine[i] = combExcitation[i];
+  }
 
-  // Body acoustic filter variables (Helmholtz 105Hz & soundboard 210Hz)
-  const bodyResonanceFreq = isBassString ? 104 : 210;
-  const bodyW = (2 * Math.PI * bodyResonanceFreq) / sampleRate;
-  const bodyCos = Math.cos(bodyW);
-  const bodyAlpha = Math.sin(bodyW) * 0.18; // Q ~ 2.8
-  const b0 = bodyAlpha;
-  const b2 = -bodyAlpha;
-  const a0 = 1 + bodyAlpha;
-  const a1 = -2 * bodyCos;
-  const a2 = 1 - bodyAlpha;
+  // Frequency-dependent damping: bass strings have longer acoustic sustain than treble
+  const decay = isBassString
+    ? 0.996 - (freq / 6000) * 0.02
+    : 0.991 - (freq / 3500) * 0.035;
 
-  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  let yPrev = 0;
+
+  // 4. Acoustic guitar wooden soundboard resonance filter (Helmholtz ~105 Hz, Soundboard ~215 Hz)
+  const bodyFreq1 = 105; // Air cavity
+  const bodyFreq2 = 215; // Soundboard top plate
+  const w1 = (2 * Math.PI * bodyFreq1) / sampleRate;
+  const w2 = (2 * Math.PI * bodyFreq2) / sampleRate;
+  const q1 = 3.2;
+  const q2 = 4.0;
+  const alpha1 = Math.sin(w1) / (2 * q1);
+  const alpha2 = Math.sin(w2) / (2 * q2);
+
+  // Biquad 1 coefficients (Helmholtz)
+  const b0_1 = alpha1, b1_1 = 0, b2_1 = -alpha1;
+  const a0_1 = 1 + alpha1, a1_1 = -2 * Math.cos(w1), a2_1 = 1 - alpha1;
+
+  // Biquad 2 coefficients (Soundboard)
+  const b0_2 = alpha2, b1_2 = 0, b2_2 = -alpha2;
+  const a0_2 = 1 + alpha2, a1_2 = -2 * Math.cos(w2), a2_2 = 1 - alpha2;
+
+  let x1_1 = 0, x2_1 = 0, y1_1 = 0, y2_1 = 0;
+  let x1_2 = 0, x2_2 = 0, y1_2 = 0, y2_2 = 0;
 
   for (let i = 0; i < numSamples; i++) {
-    let rawStringSample = 0;
-    if (i < period) {
-      rawStringSample = excitation[i];
-    } else {
-      const idx = i - period;
-      const current = left[idx];
-      // Low-pass averaging to simulate string dampening
-      const filtered = 0.495 * current + 0.505 * yPrev1;
-      yPrev1 = filtered;
-      rawStringSample = filtered * decayFactor;
-    }
+    const readIndex = i % period;
+    const currentSample = delayLine[readIndex];
 
-    // Apply wooden body resonance filter
-    const bodySample =
-      ((b0 / a0) * rawStringSample +
-        (b2 / a0) * x2 -
-        (a1 / a0) * y1 -
-        (a2 / a0) * y2) *
-      0.45;
+    // Nylon string lowpass damping filter (smoothing between current and previous)
+    const lowpassed = 0.52 * currentSample + 0.48 * yPrev;
+    yPrev = lowpassed;
 
-    x2 = x1;
-    x1 = rawStringSample;
-    y2 = y1;
-    y1 = bodySample;
+    // Feedback into delay line with decay
+    delayLine[readIndex] = lowpassed * decay;
 
-    // Combined sound: string attack + acoustic guitar wooden body
-    const finalMono = (rawStringSample * 0.75 + bodySample * 0.55);
+    // Resonator 1: Air cavity
+    const bodyOut1 =
+      (b0_1 / a0_1) * currentSample +
+      (b1_1 / a0_1) * x1_1 +
+      (b2_1 / a0_1) * x2_1 -
+      (a1_1 / a0_1) * y1_1 -
+      (a2_1 / a0_1) * y2_1;
+    x2_1 = x1_1;
+    x1_1 = currentSample;
+    y2_1 = y1_1;
+    y1_1 = bodyOut1;
 
-    // Stereo panning (bass strings panned slightly left, treble slightly right)
-    const pan = isBassString ? -0.15 : 0.2;
-    left[i] = finalMono * (0.5 * (1 - pan));
-    right[i] = finalMono * (0.5 * (1 + pan));
+    // Resonator 2: Soundboard
+    const bodyOut2 =
+      (b0_2 / a0_2) * currentSample +
+      (b1_2 / a0_2) * x1_2 +
+      (b2_2 / a0_2) * x2_2 -
+      (a1_2 / a0_2) * y1_2 -
+      (a2_2 / a0_2) * y2_2;
+    x2_2 = x1_2;
+    x1_2 = currentSample;
+    y2_2 = y1_2;
+    y1_2 = bodyOut2;
+
+    // Composite sound: direct string + wooden body reverberation
+    const directSound = currentSample * 0.72;
+    const bodyWood = bodyOut1 * 0.45 + bodyOut2 * 0.35;
+    const guitarSample = (directSound + bodyWood) * 1.15;
+
+    // Natural stereo placement (basses panned slightly left, trebles slightly right)
+    const pan = isBassString ? -0.18 : 0.22;
+    left[i] = guitarSample * (0.5 * (1 - pan));
+    right[i] = guitarSample * (0.5 * (1 + pan));
   }
 
   return buffer;
 }
 
 /**
- * Real-time Background Guitar Accompanist with BPM Tempo & Volume control.
+ * Real-time Background Gaucho Guitar Accompanist
+ * Features humanized milonga tempo and natural wooden tone shaping.
  */
 export class GauchoGuitarAccompanist {
   private audioCtx: AudioContext | null = null;
@@ -179,9 +219,6 @@ export class GauchoGuitarAccompanist {
 
   public setTempo(bpm: number) {
     this.tempoBpm = Math.max(45, Math.min(120, bpm));
-    if (this.isPlaying) {
-      // Re-align on next loop cycle
-    }
   }
 
   public getTempo(): number {
@@ -205,19 +242,26 @@ export class GauchoGuitarAccompanist {
     if (!this.masterGain) {
       this.masterGain = this.audioCtx.createGain();
 
-      // Warm acoustic tone shaping EQ
+      // Warm acoustic tone shaping EQ (Acoustic Cedar/Spruce Guitar)
       const lowShelf = this.audioCtx.createBiquadFilter();
       lowShelf.type = 'lowshelf';
-      lowShelf.frequency.value = 250;
-      lowShelf.gain.value = 4.0; // Warm guitar body
+      lowShelf.frequency.value = 240;
+      lowShelf.gain.value = 3.5; // Warm wooden body thump
+
+      const midPeak = this.audioCtx.createBiquadFilter();
+      midPeak.type = 'peaking';
+      midPeak.frequency.value = 1800;
+      midPeak.Q.value = 1.0;
+      midPeak.gain.value = -2.0; // Avoid synthetic harshness
 
       const highShelf = this.audioCtx.createBiquadFilter();
       highShelf.type = 'highshelf';
-      highShelf.frequency.value = 3500;
-      highShelf.gain.value = -3.0; // Soften plastic highs for natural nylon tone
+      highShelf.frequency.value = 4000;
+      highShelf.gain.value = -3.5; // Sweet nylon top-end
 
       this.masterGain.connect(lowShelf);
-      lowShelf.connect(highShelf);
+      lowShelf.connect(midPeak);
+      midPeak.connect(highShelf);
       highShelf.connect(this.audioCtx.destination);
     }
 
@@ -234,12 +278,14 @@ export class GauchoGuitarAccompanist {
     const loopDurationSec = BASE_TOTAL_BEATS * secondsPerBeat;
 
     MILONGA_BEATS_LOOP.forEach((event) => {
-      const timeOffset = event.beat * secondsPerBeat;
+      // Subtle human micro-rubato (+/- 6ms) for natural acoustic feel
+      const humanOffset = (Math.random() - 0.5) * 0.012;
+      const timeOffset = Math.max(0, event.beat * secondsPerBeat + humanOffset);
       const freq = GUITAR_FREQS[event.note] || 110;
       const sample = createRealisticGuitarSample(
         this.audioCtx!,
         freq,
-        2.5,
+        event.durationSec || 2.5,
         event.velocity,
         event.stringIndex === 0
       );
@@ -251,15 +297,16 @@ export class GauchoGuitarAccompanist {
       this.activeSources.push(source);
     });
 
+    // Clean up old source nodes
     setTimeout(() => {
-      this.activeSources = this.activeSources.slice(-25);
+      this.activeSources = this.activeSources.slice(-30);
     }, 4000);
 
     this.loopTimer = setTimeout(() => {
       if (this.isPlaying) {
-        this.scheduleNextLoop(0.04);
+        this.scheduleNextLoop(0.02);
       }
-    }, (loopDurationSec - 0.08) * 1000);
+    }, (loopDurationSec - 0.05) * 1000);
   }
 
   public stop() {
@@ -280,7 +327,7 @@ export class GauchoGuitarAccompanist {
 
 /**
  * Offline Audio Renderer & Mixer:
- * Combines voice WAV and synthesized acoustic guitar punteo with adjustable tempo and volume into a final WAV file.
+ * Combines voice WAV and synthesized acoustic nylon guitar punteo with adjustable tempo and volume into a final WAV file.
  */
 export async function mixVoiceWithGuitarPunteo(
   voiceWavBlob: Blob,
@@ -296,7 +343,7 @@ export async function mixVoiceWithGuitarPunteo(
   const tempCtx = new AudioCtx();
   const voiceAudioBuffer = await tempCtx.decodeAudioData(voiceArrayBuffer);
 
-  const duration = voiceAudioBuffer.duration + 1.5; // tail for final ring
+  const duration = voiceAudioBuffer.duration + 2.0; // tail for acoustic ring
   const sampleRate = voiceAudioBuffer.sampleRate;
 
   const offlineCtx = new OfflineAudioContext(2, Math.floor(sampleRate * duration), sampleRate);
@@ -312,8 +359,22 @@ export async function mixVoiceWithGuitarPunteo(
 
   // 2. Synthesized Guitar Track with chosen Tempo BPM
   const guitarGain = offlineCtx.createGain();
-  guitarGain.gain.value = guitarVolume * 0.85;
-  guitarGain.connect(offlineCtx.destination);
+  guitarGain.gain.value = Math.max(0.05, Math.min(1.0, guitarVolume * 0.9));
+
+  // Acoustic tone filter in offline context
+  const lowShelf = offlineCtx.createBiquadFilter();
+  lowShelf.type = 'lowshelf';
+  lowShelf.frequency.value = 240;
+  lowShelf.gain.value = 3.5;
+
+  const highShelf = offlineCtx.createBiquadFilter();
+  highShelf.type = 'highshelf';
+  highShelf.frequency.value = 3800;
+  highShelf.gain.value = -3.5;
+
+  guitarGain.connect(lowShelf);
+  lowShelf.connect(highShelf);
+  highShelf.connect(offlineCtx.destination);
 
   const secondsPerBeat = 60.0 / (Math.max(45, Math.min(120, guitarTempoBpm)) * 1.8);
   const loopDurationSec = BASE_TOTAL_BEATS * secondsPerBeat;
@@ -327,7 +388,7 @@ export async function mixVoiceWithGuitarPunteo(
         const stringBuffer = createRealisticGuitarSample(
           offlineCtx,
           freq,
-          2.5,
+          event.durationSec || 2.5,
           event.velocity,
           event.stringIndex === 0
         );

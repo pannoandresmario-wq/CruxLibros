@@ -37,6 +37,8 @@ interface ReaderViewProps {
   onToggleExcludeSentence: (sentenceId: string) => void;
   onBatchExcludeSentences: (sentenceIds: string[]) => void;
   onCreateCustomSummaryFromSelected?: () => void;
+  onPlayFromSaved?: () => void;
+  onRestartFromBeginning?: () => void;
 }
 
 export const ReaderView: React.FC<ReaderViewProps> = ({
@@ -56,20 +58,22 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   onToggleExcludeSentence,
   onBatchExcludeSentences,
   onCreateCustomSummaryFromSelected,
+  onPlayFromSaved,
+  onRestartFromBeginning,
 }) => {
   const activeSentenceRef = useRef<HTMLSpanElement | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
 
-  // Auto-scroll when active sentence changes
+  // Auto-scroll when active sentence changes or document loads
   useEffect(() => {
-    if (settings.autoScroll && activeSentenceRef.current) {
+    if (activeSentenceRef.current) {
       activeSentenceRef.current.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       });
     }
-  }, [currentSentenceIndex, settings.autoScroll]);
+  }, [currentSentenceIndex, document.id, settings.autoScroll]);
 
   // Map paragraphs to their sentence items
   const paragraphSentencesMap = useMemo(() => {
@@ -303,6 +307,52 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           </p>
         </div>
 
+        {/* Reading Memory Banner: Shows saved position and allows instant continuation */}
+        {((document.currentSentenceIndex ?? 0) > 0 || document.percentRead > 0) && (
+          <div className="mb-6 p-3.5 sm:p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0">
+                <BookmarkCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                    Memoria de Lectura Guardada
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold">
+                    Párrafo {(document.currentParagraphIndex ?? 0) + 1} de {document.paragraphs.length} ({document.percentRead}% completado)
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-600 dark:text-stone-300 mt-0.5">
+                  {isPlaying 
+                    ? 'Lectura en curso en esta posición.' 
+                    : 'La lectura se guardó aquí. Pulsa Continuar para seguir exactamente donde te quedaste sin repetir nada.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {!isPlaying && onPlayFromSaved && (
+                <button
+                  onClick={onPlayFromSaved}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-all active:scale-95"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Continuar Aquí</span>
+                </button>
+              )}
+              {onRestartFromBeginning && (
+                <button
+                  onClick={onRestartFromBeginning}
+                  className="px-2.5 py-1.5 rounded-xl bg-stone-200/70 dark:bg-stone-800 hover:bg-stone-300 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 font-semibold text-xs cursor-pointer transition-colors"
+                  title="Reiniciar lectura desde el Párrafo 1"
+                >
+                  Reiniciar al Inicio
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Paragraphs and Sentence Splitting List */}
         <div 
           className={`space-y-6 ${getFontClass()}`}
@@ -317,32 +367,58 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             const hasActiveSentenceInParagraph = paragraphSentences.some(
               (s) => s.globalIndex === currentSentenceIndex
             );
+            const isSavedParagraph = pIdx === (document.currentParagraphIndex ?? 0);
 
             return (
               <div
                 key={pIdx}
-                className={`group relative p-3 sm:p-4 rounded-xl transition-all select-text border-l-4 ${
+                className={`group relative p-3.5 sm:p-5 rounded-2xl transition-all select-text border-l-4 ${
                   hasActiveSentenceInParagraph
-                    ? 'border-amber-500 bg-amber-500/5 dark:bg-amber-500/10'
-                    : 'border-transparent hover:bg-stone-200/20 dark:hover:bg-stone-800/20'
+                    ? 'border-amber-500 bg-amber-500/10 dark:bg-amber-500/15 shadow-sm ring-1 ring-amber-500/20'
+                    : isSavedParagraph && !isPlaying
+                    ? 'border-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10'
+                    : 'border-transparent hover:bg-stone-200/25 dark:hover:bg-stone-800/25'
                 }`}
               >
-                {/* Paragraph Bookmark Action */}
-                <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-stone-100/90 dark:bg-stone-800/90 backdrop-blur-xs p-1 rounded-lg border border-stone-200 dark:border-stone-700 z-10">
-                  <button
-                    onClick={() => onToggleBookmark(pIdx)}
-                    className={`p-1 rounded cursor-pointer ${
-                      isBookmarked
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'
-                    }`}
-                    title={isBookmarked ? 'Quitar marcador' : 'Marcar este párrafo'}
-                  >
-                    {isBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
-                  </button>
+                {/* Paragraph Header: Clear tracking of which paragraph is being read */}
+                <div className="flex items-center justify-between mb-2.5 pb-1.5 border-b border-stone-200/50 dark:border-stone-800/50 text-xs select-none">
+                  <div className="flex items-center gap-2">
+                    <span className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded-md transition-colors ${
+                      hasActiveSentenceInParagraph
+                        ? 'bg-amber-500 text-stone-950 shadow-xs'
+                        : isSavedParagraph
+                        ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/40'
+                        : 'bg-stone-200/70 dark:bg-stone-800 text-stone-500 dark:text-stone-400'
+                    }`}>
+                      Párrafo {pIdx + 1} de {document.paragraphs.length}
+                    </span>
 
-                  <div className="px-1.5 py-0.5 text-[10px] font-mono text-stone-400">
-                    P{pIdx + 1}
+                    {hasActiveSentenceInParagraph && (
+                      <span className="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                        {isPlaying ? 'Leyendo ahora' : 'Pausado en este punto'}
+                      </span>
+                    )}
+
+                    {!hasActiveSentenceInParagraph && isSavedParagraph && (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                        <span>📌</span> Punto de lectura guardado
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => onToggleBookmark(pIdx)}
+                      className={`p-1 rounded cursor-pointer ${
+                        isBookmarked
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'
+                      }`}
+                      title={isBookmarked ? 'Quitar marcador' : 'Marcar este párrafo'}
+                    >
+                      {isBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
                 </div>
 

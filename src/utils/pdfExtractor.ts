@@ -20,9 +20,27 @@ export async function extractTextFromPDF(
   let arrayBuffer: ArrayBuffer;
 
   if (fileOrBuffer instanceof File) {
+    // Security Directive 16: Max file size 25MB
+    const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+    if (fileOrBuffer.size > MAX_SIZE_BYTES) {
+      throw new Error('El archivo excede el tamaño máximo permitido de 25 MB.');
+    }
     arrayBuffer = await fileOrBuffer.arrayBuffer();
   } else {
     arrayBuffer = fileOrBuffer;
+  }
+
+  // Security Directive 16: Magic Bytes Validation (%PDF- = 0x25, 0x50, 0x44, 0x46, 0x2D)
+  const headerBytes = new Uint8Array(arrayBuffer.slice(0, 5));
+  const isPdfMagic =
+    headerBytes[0] === 0x25 &&
+    headerBytes[1] === 0x50 &&
+    headerBytes[2] === 0x44 &&
+    headerBytes[3] === 0x46 &&
+    headerBytes[4] === 0x2d;
+
+  if (!isPdfMagic) {
+    throw new Error('El archivo no tiene una cabecera PDF válida (%PDF-). Formato no admitido.');
   }
 
   const loadingTask = pdfjsLib.getDocument({

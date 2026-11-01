@@ -55,6 +55,18 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   // Process PDF
   const handlePDFUpload = async (file: File) => {
     setErrorMessage(null);
+
+    // Security Directive 16: Validate MIME type and extension
+    if (file.type && file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setErrorMessage('Solo se admiten archivos con formato PDF válido.');
+      return;
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      setErrorMessage('El archivo excede el tamaño máximo permitido de 25 MB.');
+      return;
+    }
+
     setIsProcessingPdf(true);
     setPdfFile(file);
 
@@ -246,8 +258,13 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       return;
     }
 
-    const title = textTitle.trim() || 'Texto sin título';
-    const cleanedContent = repairDocumentText(textContent);
+    if (textContent.length > 250000) {
+      setErrorMessage('El texto es demasiado extenso (máximo 250.000 caracteres por documento).');
+      return;
+    }
+
+    const title = textTitle.trim().slice(0, 150) || 'Texto sin título';
+    const cleanedContent = repairDocumentText(textContent.slice(0, 250000));
     const paragraphs = splitIntoCleanParagraphs(cleanedContent);
     const wordCount = cleanedContent.split(/\s+/).filter(Boolean).length;
 

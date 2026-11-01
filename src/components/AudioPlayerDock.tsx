@@ -34,6 +34,10 @@ interface AudioPlayerDockProps {
   onUpdateSettings: (newSettings: Partial<ReaderSettings>) => void;
   onOpenAudioDownloadModal: () => void;
   isOnline: boolean;
+  onSelectVoice?: (voice: ReaderSettings['geminiVoice']) => void;
+  onToggleGaucho?: () => void;
+  currentParagraphIndex?: number;
+  totalParagraphs?: number;
 }
 
 export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
@@ -51,6 +55,10 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
   onUpdateSettings,
   onOpenAudioDownloadModal,
   isOnline,
+  onSelectVoice,
+  onToggleGaucho,
+  currentParagraphIndex,
+  totalParagraphs,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [availableBrowserVoices, setAvailableBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -81,12 +89,12 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
     });
   }, [availableBrowserVoices]);
 
-  const geminiVoices: Array<{ id: ReaderSettings['geminiVoice']; name: string; desc: string }> = [
-    { id: 'Kore', name: 'Kore', desc: 'Femenina, natural y cálida' },
-    { id: 'Fenrir', name: 'Fenrir', desc: 'Masculina, profunda y firme' },
-    { id: 'Puck', name: 'Puck', desc: 'Expresiva, dinámica y vivaz' },
-    { id: 'Charon', name: 'Charon', desc: 'Solemne, calmada y académica' },
-    { id: 'Zephyr', name: 'Zephyr', desc: 'Suave, reflexiva y amena' },
+  const geminiVoices: Array<{ id: ReaderSettings['geminiVoice']; name: string; desc: string; gender: string }> = [
+    { id: 'Fenrir', name: 'Fenrir', desc: 'Profunda, grave y firme', gender: 'Masculina' },
+    { id: 'Charon', name: 'Charon', desc: 'Baja, solemne y académica', gender: 'Masculina' },
+    { id: 'Puck', name: 'Puck', desc: 'Enérgica, dinámica y vivaz', gender: 'Masculina' },
+    { id: 'Kore', name: 'Kore', desc: 'Cálida, clara y natural', gender: 'Femenina' },
+    { id: 'Zephyr', name: 'Zephyr', desc: 'Suave, dulce y reflexiva', gender: 'Femenina' },
   ];
 
   const progressPercent = totalSentences > 0 
@@ -137,6 +145,9 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-xs font-semibold font-mono text-amber-400">
+                  {totalParagraphs && totalParagraphs > 0 ? (
+                    <span className="text-stone-300">Párrafo <span className="text-amber-300 font-bold">{(currentParagraphIndex ?? 0) + 1}</span>/{totalParagraphs} • </span>
+                  ) : null}
                   Oración {currentSentenceIndex + 1}/{totalSentences}
                 </span>
 
@@ -228,11 +239,16 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
             {/* Quick Gaucho toggle button */}
             <button
               onClick={() => {
-                const nextGaucho = settings.voiceStyleMode !== 'gaucho';
-                onUpdateSettings({ 
-                  voiceStyleMode: nextGaucho ? 'gaucho' : 'standard',
-                  guitarAccompaniment: nextGaucho ? true : settings.guitarAccompaniment,
-                });
+                if (onToggleGaucho) {
+                  onToggleGaucho();
+                } else {
+                  const nextGaucho = settings.voiceStyleMode !== 'gaucho';
+                  onUpdateSettings({ 
+                    voiceStyleMode: nextGaucho ? 'gaucho' : 'standard',
+                    guitarAccompaniment: nextGaucho ? true : settings.guitarAccompaniment,
+                    geminiVoice: 'Fenrir',
+                  });
+                }
               }}
               className={`p-2 rounded-xl border text-xs flex items-center gap-1.5 cursor-pointer transition-all ${
                 settings.voiceStyleMode === 'gaucho'
@@ -293,11 +309,16 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const next = settings.voiceStyleMode !== 'gaucho';
-                      onUpdateSettings({ 
-                        voiceStyleMode: next ? 'gaucho' : 'standard',
-                        guitarAccompaniment: next ? true : settings.guitarAccompaniment,
-                      });
+                      if (onToggleGaucho) {
+                        onToggleGaucho();
+                      } else {
+                        const next = settings.voiceStyleMode !== 'gaucho';
+                        onUpdateSettings({ 
+                          voiceStyleMode: next ? 'gaucho' : 'standard',
+                          guitarAccompaniment: next ? true : settings.guitarAccompaniment,
+                          geminiVoice: 'Fenrir',
+                        });
+                      }
                     }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                       settings.voiceStyleMode === 'gaucho'
@@ -405,20 +426,28 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                 {geminiVoices.map((v) => (
                   <button
                     key={v.id}
-                    onClick={() => onUpdateSettings({ geminiVoice: v.id, voiceEngine: 'gemini' })}
+                    onClick={() => {
+                      if (onSelectVoice) {
+                        onSelectVoice(v.id);
+                      } else {
+                        onUpdateSettings({ geminiVoice: v.id, voiceEngine: 'gemini', voiceStyleMode: 'standard' });
+                      }
+                    }}
                     className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                      settings.geminiVoice === v.id && settings.voiceEngine === 'gemini'
+                      settings.geminiVoice === v.id && settings.voiceEngine === 'gemini' && settings.voiceStyleMode !== 'gaucho'
                         ? 'border-amber-500 bg-amber-500/25 text-amber-200 font-semibold ring-1 ring-amber-500/50'
                         : 'border-stone-800 bg-stone-900 text-stone-300 hover:bg-stone-850'
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-bold">{v.name}</div>
-                      {settings.geminiVoice === v.id && settings.voiceEngine === 'gemini' && (
-                        <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                      )}
+                      <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
+                        v.gender === 'Masculina' ? 'bg-sky-500/20 text-sky-300' : 'bg-pink-500/20 text-pink-300'
+                      }`}>
+                        {v.gender}
+                      </span>
                     </div>
-                    <div className="text-[10px] text-stone-400 leading-tight mt-0.5">
+                    <div className="text-[10px] text-stone-400 leading-tight mt-1">
                       {v.desc}
                     </div>
                   </button>
