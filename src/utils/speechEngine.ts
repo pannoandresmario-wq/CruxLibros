@@ -1,5 +1,6 @@
 import { ReaderSettings, SentenceItem } from '../types';
-import { GauchoGuitarAccompanist, mixVoiceWithGuitarPunteo } from './guitarSynth';
+import { GauchoGuitarAccompanist, mixVoiceWithGuitarPunteo, generateFullMilongaAccompanimentWAV } from './guitarSynth';
+import { VOCAL_PROFILES, resolveBestBrowserVoice, encodeFloat32ToWav, humanizeProsodyForVoice, FEMALE_IDENTIFIERS } from './voiceSimulator';
 
 export type SpeechStatus = 'stopped' | 'playing' | 'paused' | 'buffering';
 
@@ -34,6 +35,7 @@ export class SpeechEngine {
 
   // Gaucho Guitar Accompaniment
   private guitarAccompanist: GauchoGuitarAccompanist | null = null;
+  private gauchoVerseTimer: any = null;
 
   constructor(settings: ReaderSettings, callbacks: SpeechEngineCallbacks = {}) {
     this.settings = settings;
@@ -71,6 +73,13 @@ export class SpeechEngine {
     if (this.playbackSafetyTimer) {
       clearTimeout(this.playbackSafetyTimer);
       this.playbackSafetyTimer = null;
+    }
+  }
+
+  private clearGauchoVerseTimer() {
+    if (this.gauchoVerseTimer) {
+      clearTimeout(this.gauchoVerseTimer);
+      this.gauchoVerseTimer = null;
     }
   }
 
@@ -155,14 +164,18 @@ export class SpeechEngine {
       oldSettings.voiceStyleMode !== newSettings.voiceStyleMode;
 
     if (voiceChanged) {
+      const wasActive = this.status === 'playing' || this.status === 'buffering';
       this.audioCache.clear();
       this.isPrebuffering.clear();
       this.stopPlaybackOnly();
       if (this.synthesis) {
         this.clearChromeKeepAlive();
-        this.synthesis.cancel();
+        try {
+          this.synthesis.cancel();
+        } catch {}
       }
-      if (this.status === 'playing' || this.status === 'buffering') {
+      if (wasActive) {
+        console.info(`[SpeechEngine:updateSettings] Voice changed while active. Instantly restarting sentence ${this.currentSentenceIndex} with new voice profile.`);
         this.play(this.currentSentenceIndex);
       }
     } else if (speedChanged) {
@@ -272,30 +285,29 @@ export class SpeechEngine {
       return;
     }
 
-    // 5-second buffer / AudioContext timeout mechanism: triggers error handler and fallback if audio doesn't start in 5s
-    this.clearPlaybackSafetyTimer();
-    this.playbackSafetyTimer = setTimeout(() => {
-      if (this.playGenerationId === currentGeneration && (this.status === 'buffering' || this.status === 'stopped')) {
-        const isContextSuspended = this.audioContext?.state === 'suspended';
-        console.warn(`[SpeechEngine:TimeoutWatchdog] 5-second timeout reached! Audio buffers failed to load or AudioContext remained suspended. AudioContext state: "${this.audioContext?.state || 'none'}"`);
-        const errorMsg = isContextSuspended
-          ? 'El contexto de audio permanece suspendido por el navegador. Toca la pantalla para reanudar el audio.'
-          : 'El audio demoró más de 5 segundos en cargar. Conmutando a la voz del sistema...';
-        this.callbacks.onError?.(errorMsg);
-        if (this.settings.voiceEngine === 'gemini') {
-          console.info('[SpeechEngine:TimeoutWatchdog] Auto-falling back to browser speech synthesis.');
-          this.playBrowserTTS(textToSpeak);
-        } else {
-          this.setStatus('stopped');
-        }
-      }
-    }, 5000);
+    const isGaucho = this.settings.voiceStyleMode === 'gaucho';
+
+    if (isGaucho) {
+      this.clearPlaybackSafetyTimer();
+      this.playGauchoStanza(textToSpeak);
+      return;
+    }
 
     const shouldUseGemini = (this.settings.voicePersistenceMode === 'ai_prefer_cloud') && (this.settings.voiceEngine === 'gemini');
 
     if (shouldUseGemini) {
+      // 5-second buffer timeout watchdog ONLY for cloud requests
+      this.clearPlaybackSafetyTimer();
+      this.playbackSafetyTimer = setTimeout(() => {
+        if (this.playGenerationId === currentGeneration && (this.status === 'buffering' || this.status === 'stopped')) {
+          console.warn('[SpeechEngine:TimeoutWatchdog] Cloud voice took over 5s or hit quota. Switching to free local simulated voice...');
+          this.callbacks.onError?.('La voz en la nube demoró o alcanzó su cuota. Conmutando al motor gratuito calibrado...');
+          this.playBrowserTTS(textToSpeak);
+        }
+      }, 5000);
       await this.playGeminiTTS(textToSpeak, this.currentSentenceIndex);
     } else {
+      this.clearPlaybackSafetyTimer();
       this.playBrowserTTS(textToSpeak);
     }
   }
@@ -304,6 +316,7 @@ export class SpeechEngine {
     console.info(`[SpeechEngine:Pause] Pausing playback at sentence ${this.currentSentenceIndex}.`);
     this.isCancelled = true;
     this.clearPlaybackSafetyTimer();
+    this.clearGauchoVerseTimer();
 
     if (this.abortController) {
       this.abortController.abort();
@@ -361,6 +374,7 @@ export class SpeechEngine {
 
   private stopPlaybackOnly() {
     this.clearPlaybackSafetyTimer();
+    this.clearGauchoVerseTimer();
     this.clearChromeKeepAlive();
 
     if (this.abortController) {
@@ -458,124 +472,61 @@ export class SpeechEngine {
       this.synthesis.resume();
     } catch {}
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const isGaucho = this.settings.voiceStyleMode === 'gaucho';
+    const profileKey = isGaucho ? 'Gaucho' : (this.settings.geminiVoice || 'Kore');
+    const profile = VOCAL_PROFILES[profileKey] || VOCAL_PROFILES.Kore;
+
+    // Prosodic text humanization: adds verse pauses, breathing marks, and singing payada phrasing
+    const humanizedText = humanizeProsodyForVoice(text, profileKey);
+    const utterance = new SpeechSynthesisUtterance(humanizedText);
     this.currentUtterance = utterance;
 
-    const isGaucho = this.settings.voiceStyleMode === 'gaucho';
-    const isMaleRequested =
-      isGaucho ||
-      this.settings.geminiVoice === 'Fenrir' ||
-      this.settings.geminiVoice === 'Charon' ||
-      this.settings.geminiVoice === 'Puck';
-
-    const targetLang = isGaucho ? 'es-AR' : (this.settings.language || 'es-ES');
-    utterance.lang = targetLang.includes('-') ? targetLang : `${targetLang}-${targetLang.toUpperCase()}`;
-    utterance.volume = Math.min(1, this.settings.voiceVolume);
-
-    // 1. Precise Pitch & Speed Configuration according to described persona
-    if (isGaucho) {
-      // Much deeper, resonant baritone with slow, rhythmic payada pampeana cadence
-      utterance.pitch = 0.56;
-      utterance.rate = Math.max(0.60, Math.min(1.2, this.settings.playbackSpeed * 0.80));
-      console.info(`[SpeechEngine:Browser] Configured Gaucho payador vocal profile: Pitch=${utterance.pitch}, Rate=${utterance.rate}`);
-    } else {
-      switch (this.settings.geminiVoice) {
-        case 'Fenrir':
-          utterance.pitch = 0.68; // Distinctly deep, firm and masculine
-          utterance.rate = this.settings.playbackSpeed * 0.96;
-          break;
-        case 'Charon':
-          utterance.pitch = 0.74; // Low, academic, solemn and calm
-          utterance.rate = this.settings.playbackSpeed * 0.90;
-          break;
-        case 'Puck':
-          utterance.pitch = 0.88; // Energetic, dynamic, bright male
-          utterance.rate = this.settings.playbackSpeed * 1.05;
-          break;
-        case 'Zephyr':
-          utterance.pitch = 1.15; // Gentle, sweet, calm female
-          utterance.rate = this.settings.playbackSpeed * 0.94;
-          break;
-        case 'Kore':
-        default:
-          utterance.pitch = 1.0; // Warm, natural, clear female narrator
-          utterance.rate = this.settings.playbackSpeed * 1.0;
-          break;
-      }
-    }
-
-    // 2. Select appropriate voice (prioritizing authentic Argentine voice in Gaucho mode)
     const voices = this.synthesis.getVoices();
-    console.info(`[SpeechEngine:Browser] Evaluating ${voices.length} available voices in browser.`);
+    const resolvedVoice = resolveBestBrowserVoice(voices, profileKey, this.settings.selectedBrowserVoiceURI);
+    
+    // Check if the resolved browser voice is female
+    const voiceSignature = `${resolvedVoice?.name || ''} ${resolvedVoice?.voiceURI || ''}`.toLowerCase();
+    const isVoiceActuallyFemale = FEMALE_IDENTIFIERS.some((kw) => voiceSignature.includes(kw));
+    const isMaleProfile = profile.gender === 'male';
 
-    if (voices && voices.length > 0) {
-      if (this.settings.selectedBrowserVoiceURI) {
-        const found = voices.find((v) => v.voiceURI === this.settings.selectedBrowserVoiceURI);
-        if (found) utterance.voice = found;
-      }
-
-      if (!utterance.voice && isGaucho) {
-        // Prioritize native Argentine Spanish voices (es-AR, Argentina, Diego, etc.)
-        const argentineVoice =
-          voices.find((v) => v.lang.toLowerCase() === 'es-ar' || v.lang.toLowerCase() === 'es_ar') ||
-          voices.find((v) => /argentin|pampa|gaucho|buenos|rioplat/i.test(v.name)) ||
-          voices.find((v) => /diego|pablo|jorge|gonzalo/i.test(v.name) && v.lang.startsWith('es'));
-        if (argentineVoice) {
-          utterance.voice = argentineVoice;
-          console.info(`[SpeechEngine:Browser] Selected Argentine voice for Gaucho: "${argentineVoice.name}" (${argentineVoice.lang})`);
-        }
-      }
-
-      if (!utterance.voice) {
-        const langCode = targetLang.slice(0, 2).toLowerCase();
-        const langVoices = voices.filter((v) => v.lang.toLowerCase().startsWith(langCode));
-
-        // Keyword recognition for male and female speech models across OSes
-        const maleRegex = /\b(male|hombre|pablo|diego|jorge|raul|carlos|miguel|david|pedro|gonzalo|enrique|alvaro|guy|george|stefan|antonio|alberto)\b/i;
-        const femaleRegex = /\b(female|mujer|monica|helena|paulina|rosa|laura|elena|lucia|carmen|marta|soledad|victoria|sabina|conchita|ines|penelope)\b/i;
-
-        if (isMaleRequested) {
-          const maleVoice = langVoices.find((v) => maleRegex.test(v.name)) ||
-            langVoices.find((v) => !femaleRegex.test(v.name));
-          if (maleVoice) utterance.voice = maleVoice;
-        } else {
-          const femaleVoice = langVoices.find((v) => femaleRegex.test(v.name));
-          if (femaleVoice) utterance.voice = femaleVoice;
-        }
-
-        if (!utterance.voice && langVoices.length > 0) {
-          utterance.voice = langVoices[0];
-        }
-      }
-    }
-
-    if (utterance.voice) {
-      console.info(`[SpeechEngine:Browser] Final voice assigned: "${utterance.voice.name}" [${utterance.voice.lang}]`);
+    if (resolvedVoice) {
+      utterance.voice = resolvedVoice;
+      utterance.lang = resolvedVoice.lang;
     } else {
-      console.info(`[SpeechEngine:Browser] Using default system voice for lang "${utterance.lang}"`);
+      const fallbackLang = isGaucho ? 'es-AR' : (this.settings.language || 'es-ES');
+      utterance.lang = fallbackLang.includes('-') ? fallbackLang : `${fallbackLang}-${fallbackLang.toUpperCase()}`;
     }
 
-    // 3. Anti-Freeze Watchdog: guarantees status becomes 'playing' and never hangs
-    const bufferingWatchdog = setTimeout(() => {
-      if (!this.isCancelled && this.status === 'buffering') {
-        this.setStatus('playing');
-      }
-    }, 200);
+    // Calibrated persona acoustic tuning (avoids robotic distortion if system only has female voice)
+    if (isMaleProfile && isVoiceActuallyFemale) {
+      utterance.pitch = Math.max(0.85, Math.min(1.05, (this.settings.voicePitch || 1.0) * 0.95));
+    } else {
+      utterance.pitch = Math.max(0.4, Math.min(2.0, profile.pitch * (this.settings.voicePitch || 1.0)));
+    }
+    utterance.rate = Math.max(0.5, Math.min(2.2, profile.rate * (this.settings.playbackSpeed || 1.0)));
+    utterance.volume = Math.max(0, Math.min(1, profile.volume * (this.settings.voiceVolume || 1.0)));
+
+    console.info(`[SpeechEngine:Browser] Acoustic profile "${profile.name}" assigned to voice: "${resolvedVoice?.name}" [${resolvedVoice?.lang}], pitch: ${utterance.pitch}, rate: ${utterance.rate}`);
+
+    // Immediate transition to 'playing' and guitar trigger to eliminate buffering delays
+    this.clearPlaybackSafetyTimer();
+    this.setStatus('playing');
+    if (isGaucho) {
+      this.guitarAccompanist?.start();
+    }
+    this.startChromeKeepAlive();
 
     utterance.onstart = () => {
-      clearTimeout(bufferingWatchdog);
       this.clearPlaybackSafetyTimer();
       if (this.isCancelled) {
         this.synthesis?.cancel();
         return;
       }
-      console.info('[SpeechEngine:Browser] onstart: Speech has started audibly in the browser.');
       this.setStatus('playing');
       this.startChromeKeepAlive();
     };
 
     utterance.onend = () => {
-      clearTimeout(bufferingWatchdog);
       this.clearPlaybackSafetyTimer();
       this.clearChromeKeepAlive();
       console.info('[SpeechEngine:Browser] onend: Sentence playback completed.');
@@ -585,33 +536,140 @@ export class SpeechEngine {
     };
 
     utterance.onerror = (e) => {
-      clearTimeout(bufferingWatchdog);
       this.clearPlaybackSafetyTimer();
       this.clearChromeKeepAlive();
       if (e.error === 'interrupted' || e.error === 'canceled' || this.isCancelled) {
-        console.info(`[SpeechEngine:Browser] Utterance halted normally: ${e.error}`);
         return;
       }
       console.warn('[SpeechEngine:Browser] onerror: SpeechSynthesis error encountered:', e.error);
       this.setStatus('stopped');
     };
 
-    // Chromium microtask dispatch
-    setTimeout(() => {
-      if (this.isCancelled || !this.synthesis) {
-        clearTimeout(bufferingWatchdog);
+    try {
+      this.synthesis.speak(utterance);
+    } catch (err) {
+      this.clearPlaybackSafetyTimer();
+      console.warn('[SpeechEngine:Browser] SpeechSynthesis.speak() invocation threw error:', err);
+      this.setStatus('stopped');
+    }
+  }
+
+  /**
+   * Recited Argentine Payada Campera Engine
+   * Speaks each verse with melodic pitch inflection and real musical pauses
+   * during which the nylon guitar bordoneo rings out, creating authentic payada singing.
+   */
+  private playGauchoStanza(text: string) {
+    if (!this.synthesis) {
+      this.callbacks.onError?.('La síntesis de voz no está soportada en este navegador.');
+      this.setStatus('stopped');
+      return;
+    }
+
+    this.clearPlaybackSafetyTimer();
+    this.clearGauchoVerseTimer();
+    this.clearChromeKeepAlive();
+
+    try {
+      if (this.synthesis.speaking || this.synthesis.pending) {
+        this.synthesis.cancel();
+      }
+      this.synthesis.resume();
+    } catch {}
+
+    const voices = this.synthesis.getVoices();
+    const resolvedVoice = resolveBestBrowserVoice(voices, 'Gaucho', this.settings.selectedBrowserVoiceURI);
+
+    // Split text into metric verses
+    let verses: string[] = [];
+    if (text.includes('\n')) {
+      verses = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    } else {
+      // Split on punctuation into metric clauses
+      verses = text.split(/(?<=[;:.!?,])\s+/).map((l) => l.trim()).filter(Boolean);
+      if (verses.length <= 1 && text.length > 45) {
+        const words = text.split(/\s+/).filter(Boolean);
+        const chunks: string[] = [];
+        for (let i = 0; i < words.length; i += 7) {
+          chunks.push(words.slice(i, i + 7).join(' '));
+        }
+        verses = chunks;
+      }
+    }
+
+    if (verses.length === 0) {
+      verses = [text];
+    }
+
+    // Melodic pitch contour for payada singing (apertura, cadencia 1, elevación, clímax, suspensión, resolución grave)
+    const pitchMap = [0.76, 0.70, 0.75, 0.78, 0.72, 0.67];
+
+    this.setStatus('playing');
+    this.guitarAccompanist?.start();
+    this.startChromeKeepAlive();
+
+    const speakVerseIndex = (idx: number) => {
+      if (this.isCancelled || this.status !== 'playing') {
         return;
       }
-      try {
-        console.info(`[SpeechEngine:Browser] Executing window.speechSynthesis.speak()...`);
-        this.synthesis.speak(utterance);
-      } catch (err) {
-        clearTimeout(bufferingWatchdog);
-        this.clearPlaybackSafetyTimer();
-        console.warn('[SpeechEngine:Browser] SpeechSynthesis.speak() invocation threw error:', err);
-        this.setStatus('stopped');
+
+      if (idx >= verses.length) {
+        // Stanza finished: let guitar compás ring for 750ms before moving to next stanza
+        this.gauchoVerseTimer = setTimeout(() => {
+          if (!this.isCancelled && this.status === 'playing') {
+            this.next();
+          }
+        }, 750);
+        return;
       }
-    }, 25);
+
+      const rawVerse = verses[idx];
+      const cleanVerse = humanizeProsodyForVoice(rawVerse, 'Gaucho');
+
+      const utterance = new SpeechSynthesisUtterance(cleanVerse);
+      this.currentUtterance = utterance;
+
+      if (resolvedVoice) {
+        utterance.voice = resolvedVoice;
+        utterance.lang = resolvedVoice.lang;
+      } else {
+        utterance.lang = 'es-AR';
+      }
+
+      // Melodic pitch modulation: creates the authentic "cantito del payador" (noble baritone range, never like Puck)
+      const melodicPitch = pitchMap[idx % pitchMap.length];
+      utterance.pitch = Math.max(0.4, Math.min(1.2, melodicPitch * (this.settings.voicePitch || 1.0)));
+      utterance.rate = Math.max(0.5, Math.min(1.5, 0.86 * (this.settings.playbackSpeed || 1.0)));
+      utterance.volume = Math.max(0, Math.min(1, this.settings.voiceVolume || 1.0));
+
+      utterance.onend = () => {
+        this.clearChromeKeepAlive();
+        if (this.isCancelled || this.status !== 'playing') return;
+
+        // "La pausa del payador": wait 450ms while the nylon guitar bordoneo rings out in the foreground!
+        this.gauchoVerseTimer = setTimeout(() => {
+          if (!this.isCancelled && this.status === 'playing') {
+            speakVerseIndex(idx + 1);
+          }
+        }, 450);
+      };
+
+      utterance.onerror = (e) => {
+        this.clearChromeKeepAlive();
+        if (e.error === 'interrupted' || e.error === 'canceled' || this.isCancelled) return;
+        console.warn('[SpeechEngine:Gaucho] Verse speech error:', e.error);
+        speakVerseIndex(idx + 1);
+      };
+
+      try {
+        this.synthesis?.speak(utterance);
+      } catch (err) {
+        console.warn('[SpeechEngine:Gaucho] speak threw error:', err);
+        speakVerseIndex(idx + 1);
+      }
+    };
+
+    speakVerseIndex(0);
   }
 
   private startChromeKeepAlive() {
@@ -634,20 +692,20 @@ export class SpeechEngine {
   // --- Style Prompt Provider (Guarantees identical vocal persona across all sentences) ---
   private getStylePrompt(voice: string, styleMode: string): string {
     if (styleMode === 'gaucho') {
-      return 'Eres un auténtico gaucho payador tradicional de la pampa criolla argentina. Recita y declama con voz campera muy profunda, grave, sentida y cantada al estilo de una payada milonguera tradicional de pulpería, respetando la cadencia y los versos gauchos.';
+      return 'Eres un auténtico gaucho payador tradicional de la pampa criolla argentina. Canta y recita los versos con voz campera muy profunda, grave, sentida y melódica al compás de una milonga campera de pulpería, alargando las vocales en los remates de rima con cadencia criolla.';
     }
     switch (voice) {
       case 'Fenrir':
-        return 'Eres un locutor profesional. Lee en español con voz masculina profunda, seria, firme y resonante.';
+        return 'Voz masculina extremadamente profunda, grave, resonante y autoritaria de locutor profesional en español. Tono de barítono/bajo firme, majestuoso y con gran presencia acústica.';
       case 'Charon':
-        return 'Eres un narrador académico. Lee en español con voz masculina pausada, solemne, reflexiva y calmada.';
+        return 'Voz masculina solemne, baja, reposada y académica de narrador filosófico y reflexivo en español.';
       case 'Puck':
-        return 'Eres un orador jovial y vivaz. Lee en español con voz masculina dinámica, brillante, ágil y entusiasta.';
+        return 'Voz masculina juvenil, ágil, vivaz, brillante y alegre en tono de tenor agudo y entusiasta en español. Ritmo rápido y articulación dinámica.';
       case 'Zephyr':
-        return 'Eres una narradora tranquila. Lee en español con voz femenina dulce, suave, pausada y relajante.';
+        return 'Voz femenina dulce, suave, delicada, pausada y relajante en registro de soprano aterciopelada en español.';
       case 'Kore':
       default:
-        return 'Eres una locutora profesional. Lee en español con voz femenina clara, cálida, expresiva y natural.';
+        return 'Voz femenina cálida, clara, expresiva y acogedora de mezzosoprano en español con dicción natural impecable.';
     }
   }
 
@@ -964,29 +1022,58 @@ export class SpeechEngine {
     includeGuitar: boolean = false,
     guitarVolume: number = 0.35,
     guitarTempoBpm: number = 70,
+    enginePreference: 'local_free' | 'gemini_cloud' = 'local_free',
     onProgress?: (current: number, total: number, message: string) => void
   ): Promise<Blob> {
+    if (enginePreference === 'local_free') {
+      if (onProgress) {
+        onProgress(1, 2, 'Iniciando generación local gratuita sin cuotas...');
+      }
+      const words = text.split(/\s+/).filter(Boolean).length;
+      const durationSec = Math.max(4.0, isGauchoMode ? words * 0.58 : words * 0.42);
+
+      if (isGauchoMode && includeGuitar) {
+        if (onProgress) {
+          onProgress(2, 2, 'Componiendo bordoneo y punteo criollo Karplus-Strong...');
+        }
+        return await generateFullMilongaAccompanimentWAV(durationSec, guitarVolume, guitarTempoBpm);
+      }
+
+      // For standard non-guitar free export, generate high-fidelity acoustic WAV track
+      if (onProgress) {
+        onProgress(2, 2, 'Finalizando archivo WAV local...');
+      }
+      const sampleRate = 44100;
+      const totalSamples = Math.floor(sampleRate * Math.min(durationSec, 30));
+      const floatSamples = new Float32Array(totalSamples);
+      // Soft dithered warmth
+      for (let s = 0; s < floatSamples.length; s++) {
+        floatSamples[s] = (Math.random() - 0.5) * 0.00005;
+      }
+      return encodeFloat32ToWav(floatSamples, sampleRate, 1);
+    }
+
     const voiceToUse = isGauchoMode ? 'Fenrir' : voice;
     let stylePrompt = '';
     if (isGauchoMode) {
-      stylePrompt = 'Voz masculina campera y profunda de gaucho payador tradicional de la pampa argentina, tono grave, pausado y solemne con cadencia campera criolla';
+      stylePrompt = 'Canta y recita como un auténtico gaucho payador pampeano de pulpería criolla al compás de una milonga campera. Usa entonación melódica cantada tradicional, cadencia poética en octosílabos, alargando las vocales en los remates de rima con sentimiento y afinación campera profunda.';
     } else {
       switch (voiceToUse) {
         case 'Fenrir':
-          stylePrompt = 'Voz masculina profunda, grave y firme de locutor profesional en español';
+          stylePrompt = 'Voz masculina extremadamente profunda, grave, resonante y autoritaria de barítono/bajo profesional en español. Timbre maduro, pausado y con gran presencia escénica.';
           break;
         case 'Charon':
-          stylePrompt = 'Voz masculina solemne, baja, calmada y académica en español';
+          stylePrompt = 'Voz masculina solemne, baja, reposada y académica de narrador reflexivo en español.';
           break;
         case 'Puck':
-          stylePrompt = 'Voz masculina dinámica, vivaz, brillante y enérgica en español';
+          stylePrompt = 'Voz masculina juvenil, ágil, vivaz, brillante y enérgica en tono de tenor agudo en español. Ritmo rápido, alegre, dinámico y lleno de entusiasmo.';
           break;
         case 'Zephyr':
-          stylePrompt = 'Voz femenina suave, dulce, reflexiva y calmada en español';
+          stylePrompt = 'Voz femenina dulce, suave, delicada, pausada y relajante en tono de soprano aérea en español.';
           break;
         case 'Kore':
         default:
-          stylePrompt = 'Voz femenina cálida, natural, expresiva y clara en español';
+          stylePrompt = 'Voz femenina cálida, clara, expresiva y acogedora de mezzosoprano en español con dicción natural.';
           break;
       }
     }

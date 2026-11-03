@@ -310,7 +310,7 @@ export default function App() {
     const updatedSettings: ReaderSettings = {
       ...settings,
       geminiVoice: voice,
-      voiceEngine: 'gemini',
+      voiceEngine: settings.voicePersistenceMode === 'ai_prefer_cloud' ? 'gemini' : 'browser',
       voiceStyleMode: 'standard',
       guitarAccompaniment: false,
     };
@@ -329,7 +329,8 @@ export default function App() {
       voiceStyleMode: nextGaucho ? 'gaucho' : 'standard',
       guitarAccompaniment: nextGaucho,
       geminiVoice: 'Fenrir',
-      voiceEngine: 'gemini',
+      readingGranularity: nextGaucho ? 'paragraph' : settings.readingGranularity,
+      voiceEngine: settings.voicePersistenceMode === 'ai_prefer_cloud' ? 'gemini' : 'browser',
     };
     setSettings(updatedSettings);
     if (speechEngineRef.current) {

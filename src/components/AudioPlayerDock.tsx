@@ -94,11 +94,11 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
   }, [availableBrowserVoices]);
 
   const geminiVoices: Array<{ id: ReaderSettings['geminiVoice']; name: string; desc: string; gender: string }> = [
-    { id: 'Fenrir', name: 'Fenrir', desc: 'Profunda, grave y firme', gender: 'Masculina' },
-    { id: 'Charon', name: 'Charon', desc: 'Baja, solemne y académica', gender: 'Masculina' },
-    { id: 'Puck', name: 'Puck', desc: 'Enérgica, dinámica y vivaz', gender: 'Masculina' },
-    { id: 'Kore', name: 'Kore', desc: 'Cálida, clara y natural', gender: 'Femenina' },
-    { id: 'Zephyr', name: 'Zephyr', desc: 'Suave, dulce y reflexiva', gender: 'Femenina' },
+    { id: 'Fenrir', name: 'Fenrir', desc: 'Bajo/Barítono muy grave y firme', gender: 'Varón Grave' },
+    { id: 'Puck', name: 'Puck', desc: 'Tenor agudo, vivaz y brillante', gender: 'Varón Agudo' },
+    { id: 'Charon', name: 'Charon', desc: 'Barítono solemne y reposado', gender: 'Varón Solemne' },
+    { id: 'Kore', name: 'Kore', desc: 'Mezzosoprano cálida y natural', gender: 'Mujer Cálida' },
+    { id: 'Zephyr', name: 'Zephyr', desc: 'Soprano dulce, suave y relajante', gender: 'Mujer Suave' },
   ];
 
   const progressPercent = totalSentences > 0 
@@ -172,7 +172,7 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                   </span>
                 ) : (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 border border-stone-700 truncate">
-                    {settings.voiceEngine === 'gemini' ? settings.geminiVoice : 'Offline'}
+                    {settings.geminiVoice} {settings.voicePersistenceMode === 'ai_prefer_cloud' && settings.voiceEngine === 'gemini' ? '• Nube' : '• Gratis'}
                   </span>
                 )}
 
@@ -282,7 +282,7 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                     voiceStyleMode: nextGaucho ? 'gaucho' : 'standard',
                     guitarAccompaniment: nextGaucho ? true : settings.guitarAccompaniment,
                     geminiVoice: 'Fenrir',
-                    voiceEngine: 'gemini',
+                    voiceEngine: settings.voicePersistenceMode === 'ai_prefer_cloud' ? 'gemini' : 'browser',
                   });
                 }
               }}
@@ -603,7 +603,7 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
               <div className="flex items-center justify-between text-xs text-stone-300">
                 <div className="flex items-center gap-1.5 font-semibold">
                   <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Voces Naturales de Alta Calidad (Gemini AI):</span>
+                  <span>Voces Calibradas de Alta Fidelidad (Simuladas Gratuitas / Nube):</span>
                 </div>
                 <span className="text-amber-400 text-[11px]">Cambio instantáneo</span>
               </div>
@@ -615,11 +615,16 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                       if (onSelectVoice) {
                         onSelectVoice(v.id);
                       } else {
-                        onUpdateSettings({ geminiVoice: v.id, voiceEngine: 'gemini', voiceStyleMode: 'standard', guitarAccompaniment: false });
+                        onUpdateSettings({ 
+                          geminiVoice: v.id, 
+                          voiceEngine: settings.voicePersistenceMode === 'ai_prefer_cloud' ? 'gemini' : 'browser', 
+                          voiceStyleMode: 'standard', 
+                          guitarAccompaniment: false 
+                        });
                       }
                     }}
                     className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                      settings.geminiVoice === v.id && settings.voiceEngine === 'gemini' && settings.voiceStyleMode !== 'gaucho'
+                      settings.geminiVoice === v.id && settings.voiceStyleMode !== 'gaucho'
                         ? 'border-amber-500 bg-amber-500/25 text-amber-200 font-semibold ring-1 ring-amber-500/50'
                         : 'border-stone-800 bg-stone-900 text-stone-300 hover:bg-stone-850'
                     }`}
@@ -627,7 +632,7 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-bold">{v.name}</div>
                       <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
-                        v.gender === 'Masculina' ? 'bg-sky-500/20 text-sky-300' : 'bg-pink-500/20 text-pink-300'
+                        v.gender.startsWith('Varón') ? 'bg-sky-500/20 text-sky-300' : 'bg-pink-500/20 text-pink-300'
                       }`}>
                         {v.gender}
                       </span>

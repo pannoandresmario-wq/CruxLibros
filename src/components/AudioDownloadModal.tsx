@@ -31,6 +31,7 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
   settings,
 }) => {
   const [scope, setScope] = useState<'sentence' | 'paragraph' | 'selected' | 'summary' | 'full'>('sentence');
+  const [engineMode, setEngineMode] = useState<'local_free' | 'gemini_cloud'>('local_free');
   const [selectedVoice, setSelectedVoice] = useState<'Kore' | 'Fenrir' | 'Puck' | 'Charon' | 'Zephyr'>(settings.geminiVoice);
   const [isGauchoMode, setIsGauchoMode] = useState<boolean>(settings.voiceStyleMode === 'gaucho');
   const [includeGuitar, setIncludeGuitar] = useState<boolean>(settings.guitarAccompaniment || settings.voiceStyleMode === 'gaucho');
@@ -44,6 +45,7 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
   // Sync state with current reader settings when modal opens
   React.useEffect(() => {
     if (isOpen) {
+      setEngineMode(settings.voicePersistenceMode === 'ai_prefer_cloud' && settings.voiceEngine === 'gemini' ? 'gemini_cloud' : 'local_free');
       setSelectedVoice(settings.geminiVoice);
       setIsGauchoMode(settings.voiceStyleMode === 'gaucho');
       setIncludeGuitar(settings.guitarAccompaniment || settings.voiceStyleMode === 'gaucho');
@@ -98,6 +100,7 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
         isGauchoMode && includeGuitar,
         guitarVolume,
         guitarTempo,
+        engineMode,
         (_current, _total, msg) => {
           setProgressMsg(msg);
         }
@@ -111,8 +114,9 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
       const sanitizedDocTitle = document.title.replace(/[^a-z0-9_-]/gi, '_').slice(0, 30);
       const modeLabel = isGauchoMode ? 'gaucho_payador' : selectedVoice.toLowerCase();
       const scopeLabel = scope === 'sentence' ? `oracion_${currentSentenceIndex + 1}` : scope;
+      const engineLabel = engineMode === 'local_free' ? 'gratuito' : 'cloud';
 
-      a.download = `${sanitizedDocTitle}_${scopeLabel}_${modeLabel}.wav`;
+      a.download = `${sanitizedDocTitle}_${scopeLabel}_${modeLabel}_${engineLabel}.wav`;
       window.document.body.appendChild(a);
       a.click();
       window.document.body.removeChild(a);
@@ -158,10 +162,74 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
         {/* Body */}
         <div className="p-5 space-y-4 flex-1 overflow-y-auto">
           {errorMsg && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs">
-              {errorMsg}
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs flex flex-col gap-1.5">
+              <span>{errorMsg}</span>
+              {engineMode === 'gemini_cloud' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEngineMode('local_free');
+                    setErrorMsg(null);
+                  }}
+                  className="self-start text-[11px] underline font-bold text-amber-600 dark:text-amber-400 cursor-pointer"
+                >
+                  Cambiar a Motor Local Gratuito (Sin Límites)
+                </button>
+              )}
             </div>
           )}
+
+          {/* Engine Selector: Free Local vs Gemini Cloud */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300">
+              Motor de Generación de Audio
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setEngineMode('local_free')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1 ${
+                  engineMode === 'local_free'
+                    ? 'border-emerald-500 bg-emerald-500/15 text-emerald-950 dark:text-emerald-200 ring-1 ring-emerald-500/40 font-bold'
+                    : 'border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-850 text-stone-600 dark:text-stone-400'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-stone-900 dark:text-stone-100">
+                    ⚡ Motor Local Gratuito
+                  </span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold">
+                    Ilimitado
+                  </span>
+                </div>
+                <p className="text-[10px] text-stone-500 dark:text-stone-400 font-normal leading-tight">
+                  100% gratis en el navegador. Sin cortes, sin depender de cuotas de API y sin límites.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEngineMode('gemini_cloud')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1 ${
+                  engineMode === 'gemini_cloud'
+                    ? 'border-amber-500 bg-amber-500/15 text-amber-950 dark:text-amber-200 ring-1 ring-amber-500/40 font-bold'
+                    : 'border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-850 text-stone-600 dark:text-stone-400'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-stone-900 dark:text-stone-100">
+                    ✨ Gemini Cloud (Nube)
+                  </span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold">
+                    Opcional
+                  </span>
+                </div>
+                <p className="text-[10px] text-stone-500 dark:text-stone-400 font-normal leading-tight">
+                  Locución en servidor. Requiere cuota diaria disponible de Google AI Studio.
+                </p>
+              </button>
+            </div>
+          </div>
 
           {/* 1. Selection Scope */}
           <div className="space-y-1.5">
@@ -281,18 +349,25 @@ export const AudioDownloadModal: React.FC<AudioDownloadModalProps> = ({
             {/* If not Gaucho Mode, standard voice selector */}
             {!isGauchoMode && (
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pt-1">
-                {(['Kore', 'Fenrir', 'Puck', 'Charon', 'Zephyr'] as const).map((v) => (
+                {[
+                  { id: 'Fenrir', label: 'Fenrir', role: 'Bajo grave' },
+                  { id: 'Puck', label: 'Puck', role: 'Tenor agudo' },
+                  { id: 'Charon', label: 'Charon', role: 'Barítono' },
+                  { id: 'Kore', label: 'Kore', role: 'Mezzosoprano' },
+                  { id: 'Zephyr', label: 'Zephyr', role: 'Soprano suave' },
+                ].map((v) => (
                   <button
-                    key={v}
+                    key={v.id}
                     type="button"
-                    onClick={() => setSelectedVoice(v)}
+                    onClick={() => setSelectedVoice(v.id as any)}
                     className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
-                      selectedVoice === v
-                        ? 'border-amber-500 bg-amber-500/20 text-amber-900 dark:text-amber-200 font-bold'
+                      selectedVoice === v.id
+                        ? 'border-amber-500 bg-amber-500/20 text-amber-900 dark:text-amber-200 font-bold ring-1 ring-amber-500/40'
                         : 'border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-850 text-stone-600 dark:text-stone-400'
                     }`}
                   >
-                    <div className="text-xs">{v}</div>
+                    <div className="text-xs font-semibold">{v.label}</div>
+                    <div className="text-[9px] text-stone-400 dark:text-stone-500 leading-tight mt-0.5">{v.role}</div>
                   </button>
                 ))}
               </div>

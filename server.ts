@@ -453,20 +453,20 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
     if (!dynamicStyle) {
       switch (chosenVoice) {
         case 'Fenrir':
-          dynamicStyle = 'Voz masculina profunda, grave y firme de locutor profesional en español';
+          dynamicStyle = 'Voz masculina extremadamente profunda, grave, resonante y autoritaria de barítono/bajo profesional en español. Timbre maduro, pausado y con gran presencia escénica.';
           break;
         case 'Charon':
-          dynamicStyle = 'Voz masculina solemne, baja, calmada y académica en español';
+          dynamicStyle = 'Voz masculina solemne, baja, reposada y académica de narrador reflexivo en español.';
           break;
         case 'Puck':
-          dynamicStyle = 'Voz masculina dinámica, vivaz, brillante y enérgica en español';
+          dynamicStyle = 'Voz masculina juvenil, ágil, vivaz, brillante y enérgica en tono de tenor agudo en español. Ritmo rápido, alegre, dinámico y lleno de entusiasmo.';
           break;
         case 'Zephyr':
-          dynamicStyle = 'Voz femenina suave, dulce, reflexiva y calmada en español';
+          dynamicStyle = 'Voz femenina dulce, suave, delicada, pausada y relajante en tono de soprano aérea en español.';
           break;
         case 'Kore':
         default:
-          dynamicStyle = 'Voz femenina cálida, natural, expresiva y clara en español';
+          dynamicStyle = 'Voz femenina cálida, clara, expresiva y acogedora de mezzosoprano en español con dicción natural.';
           break;
       }
     }

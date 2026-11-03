@@ -225,6 +225,8 @@ export class GauchoGuitarAccompanist {
     return this.tempoBpm;
   }
 
+  private isFirstLoop: boolean = true;
+
   public start() {
     if (this.isPlaying) return;
 
@@ -267,6 +269,7 @@ export class GauchoGuitarAccompanist {
 
     this.masterGain.gain.setValueAtTime(this.volume, this.audioCtx.currentTime);
     this.isPlaying = true;
+    this.isFirstLoop = true;
     this.scheduleNextLoop(0);
   }
 
@@ -276,6 +279,21 @@ export class GauchoGuitarAccompanist {
     const startTime = this.audioCtx.currentTime + delaySec;
     const secondsPerBeat = 60.0 / (this.tempoBpm * 1.8);
     const loopDurationSec = BASE_TOTAL_BEATS * secondsPerBeat;
+
+    // Optional introductory criollo rasguido strum on very first loop
+    if (this.isFirstLoop) {
+      this.isFirstLoop = false;
+      const introNotes = ['E2', 'B2', 'E3', 'G3', 'B3'];
+      introNotes.forEach((note, nIdx) => {
+        const freq = GUITAR_FREQS[note] || 110;
+        const sample = createRealisticGuitarSample(this.audioCtx!, freq, 3.0, 0.75, nIdx < 2);
+        const source = this.audioCtx!.createBufferSource();
+        source.buffer = sample;
+        source.connect(this.masterGain!);
+        source.start(startTime + nIdx * 0.035);
+        this.activeSources.push(source);
+      });
+    }
 
     MILONGA_BEATS_LOOP.forEach((event) => {
       // Subtle human micro-rubato (+/- 6ms) for natural acoustic feel
@@ -362,6 +380,70 @@ export async function mixVoiceWithGuitarPunteo(
   guitarGain.gain.value = Math.max(0.05, Math.min(1.0, guitarVolume * 0.9));
 
   // Acoustic tone filter in offline context
+  const lowShelf = offlineCtx.createBiquadFilter();
+  lowShelf.type = 'lowshelf';
+  lowShelf.frequency.value = 240;
+  lowShelf.gain.value = 3.5;
+
+  const highShelf = offlineCtx.createBiquadFilter();
+  highShelf.type = 'highshelf';
+  highShelf.frequency.value = 3800;
+  highShelf.gain.value = -3.5;
+
+  guitarGain.connect(lowShelf);
+  lowShelf.connect(highShelf);
+  highShelf.connect(offlineCtx.destination);
+
+  const secondsPerBeat = 60.0 / (Math.max(45, Math.min(120, guitarTempoBpm)) * 1.8);
+  const loopDurationSec = BASE_TOTAL_BEATS * secondsPerBeat;
+
+  let currentLoopTime = 0;
+  while (currentLoopTime < duration) {
+    MILONGA_BEATS_LOOP.forEach((event) => {
+      const pluckTime = currentLoopTime + event.beat * secondsPerBeat;
+      if (pluckTime < duration) {
+        const freq = GUITAR_FREQS[event.note] || 110;
+        const stringBuffer = createRealisticGuitarSample(
+          offlineCtx,
+          freq,
+          event.durationSec || 2.5,
+          event.velocity,
+          event.stringIndex === 0
+        );
+        const stringSource = offlineCtx.createBufferSource();
+        stringSource.buffer = stringBuffer;
+        stringSource.connect(guitarGain);
+        stringSource.start(pluckTime);
+      }
+    });
+    currentLoopTime += loopDurationSec;
+  }
+
+  const renderedBuffer = await offlineCtx.startRendering();
+  return audioBufferToWavBlob(renderedBuffer);
+}
+
+/**
+ * Synthesizes a standalone offline WAV file of the Argentine Gaucho nylon guitar accompaniment
+ * matching the requested duration, volume and tempo.
+ */
+export async function generateFullMilongaAccompanimentWAV(
+  durationSec: number = 30,
+  guitarVolume: number = 0.35,
+  guitarTempoBpm: number = 70
+): Promise<Blob> {
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioCtx) {
+    throw new Error('Web Audio no soportado en este navegador');
+  }
+
+  const duration = Math.max(2.0, durationSec);
+  const sampleRate = 44100;
+  const offlineCtx = new OfflineAudioContext(2, Math.floor(sampleRate * duration), sampleRate);
+
+  const guitarGain = offlineCtx.createGain();
+  guitarGain.gain.value = Math.max(0.05, Math.min(1.0, guitarVolume * 0.9));
+
   const lowShelf = offlineCtx.createBiquadFilter();
   lowShelf.type = 'lowshelf';
   lowShelf.frequency.value = 240;
