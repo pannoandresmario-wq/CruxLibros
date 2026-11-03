@@ -16,6 +16,7 @@ import {
   Zap,
   Music,
   Download,
+  ShieldCheck,
   X
 } from 'lucide-react';
 import { ReaderSettings } from '../types';
@@ -37,6 +38,7 @@ interface AudioPlayerDockProps {
   isOnline: boolean;
   onSelectVoice?: (voice: ReaderSettings['geminiVoice']) => void;
   onToggleGaucho?: () => void;
+  onOpenQuotaModal?: () => void;
   currentParagraphIndex?: number;
   totalParagraphs?: number;
 }
@@ -58,6 +60,7 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
   isOnline,
   onSelectVoice,
   onToggleGaucho,
+  onOpenQuotaModal,
   currentParagraphIndex,
   totalParagraphs,
 }) => {
@@ -213,9 +216,9 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
 
             {/* Main Play / Pause Button */}
             <button
-              onClick={isPlaying ? onPause : onPlay}
+              onClick={isPlaying || isBuffering ? onPause : () => onPlay()}
               className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-amber-500 hover:bg-amber-400 text-stone-950 flex items-center justify-center font-bold shadow-lg transition-transform active:scale-95 cursor-pointer"
-              title={isPlaying ? 'Pausar lectura' : 'Reproducir lectura'}
+              title={isPlaying || isBuffering ? 'Pausar o cancelar lectura' : 'Reproducir lectura'}
             >
               {isBuffering ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -345,6 +348,76 @@ export const AudioPlayerDock: React.FC<AudioPlayerDockProps> = ({
             {/* Scrollable Container with max height protection */}
             <div className="overflow-y-auto p-4 sm:p-5 space-y-4 overscroll-contain">
               
+              {/* 0. Voice Engine / Persistence Strategy Card */}
+              <div className="p-3 sm:p-3.5 rounded-xl bg-stone-900 border border-stone-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-bold text-stone-100 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>Fidelidad y Persistencia de Voz (Para todo el libro)</span>
+                    </h4>
+                    <p className="text-[11px] text-stone-400 mt-0.5">
+                      Define si prefieres una voz 100% homogénea que nunca cambie ni se corte, o la voz neuronal en la nube.
+                    </p>
+                  </div>
+                  {onOpenQuotaModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenQuotaModal}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 underline font-semibold cursor-pointer shrink-0"
+                    >
+                      ¿Cómo ampliar cuota de IA?
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ voicePersistenceMode: 'system_unlimited', voiceEngine: 'browser' })}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                      settings.voicePersistenceMode !== 'ai_prefer_cloud'
+                        ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-200 ring-1 ring-emerald-500/40'
+                        : 'bg-stone-850 border-stone-750 text-stone-400 hover:text-stone-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold flex items-center gap-1.5 text-xs text-stone-100">
+                        <span>⚡</span> Voz Ilimitada y Homogénea
+                      </span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
+                        Recomendado
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 leading-tight">
+                      La misma voz lee todo el documento sin límites de cuota, sin cortes y sin cambiar de timbre jamás.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ voicePersistenceMode: 'ai_prefer_cloud', voiceEngine: 'gemini' })}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                      settings.voicePersistenceMode === 'ai_prefer_cloud'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-200 ring-1 ring-amber-500/40'
+                        : 'bg-stone-850 border-stone-750 text-stone-400 hover:text-stone-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold flex items-center gap-1.5 text-xs text-stone-100">
+                        <span>✨</span> Voz IA en la Nube (Gemini)
+                      </span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold">
+                        Nube
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 leading-tight">
+                      Locución neuronal avanzada. Sujeta a la cuota diaria de Google AI Studio.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
               {/* 1. Modo Gaucho Payador & Guitarra Criolla Section */}
               <div className="p-3 sm:p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">

@@ -1,0 +1,6 @@
+{
+  "summary": "Plan de implementación para asegurar persistencia y homogeneidad absoluta de la voz en todo el documento. Introduce un selector de fidelidad continua (Voz Ilimitada del Sistema con timbre gaucho consistente vs Voz IA con control de cuota), advertencia interactiva antes de conmutaciones y optimización de lectura por párrafos sin micro-cortes.",
+  "updatedAt": "2026-11-03T04:38:04.872692835Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

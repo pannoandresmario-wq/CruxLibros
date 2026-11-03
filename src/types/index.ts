@@ -51,6 +51,7 @@ export interface ReaderSettings {
   voicePitch: number;
   voiceVolume: number;
   voiceEngine: 'gemini' | 'browser';
+  voicePersistenceMode?: 'system_unlimited' | 'ai_prefer_cloud';
   geminiVoice: 'Kore' | 'Fenrir' | 'Puck' | 'Charon' | 'Zephyr';
   selectedBrowserVoiceURI?: string;
   language: string;

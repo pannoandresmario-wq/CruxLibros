@@ -8,6 +8,7 @@ import { AISummaryModal } from './components/AISummaryModal';
 import { CloudSyncModal } from './components/CloudSyncModal';
 import { ExportModal } from './components/ExportModal';
 import { AudioDownloadModal } from './components/AudioDownloadModal';
+import { QuotaInfoModal } from './components/QuotaInfoModal';
 import { DocumentItem, ReaderSettings, CloudSyncVault, ReadingTheme } from './types';
 import { INITIAL_SAMPLE_DOCS } from './data/sampleDocuments';
 import { 
@@ -37,14 +38,15 @@ const DEFAULT_SETTINGS: ReaderSettings = {
   playbackSpeed: 1,
   voicePitch: 1,
   voiceVolume: 1,
-  voiceEngine: 'gemini',
+  voiceEngine: 'browser',
+  voicePersistenceMode: 'system_unlimited',
   geminiVoice: 'Kore',
   language: 'es',
   voiceStyleMode: 'standard',
   guitarAccompaniment: false,
   guitarVolume: 0.35,
   guitarTempo: 70,
-  readingGranularity: 'sentence',
+  readingGranularity: 'paragraph',
   mergeShortSentences: true,
 };
 
@@ -109,6 +111,7 @@ export default function App() {
   const [syncModalOpen, setSyncModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [audioDownloadModalOpen, setAudioDownloadModalOpen] = useState(false);
+  const [quotaModalOpen, setQuotaModalOpen] = useState(false);
 
   // 7. Active Document memo
   const activeDocument = useMemo(() => {
@@ -124,7 +127,13 @@ export default function App() {
       settings.readingGranularity || 'sentence',
       settings.mergeShortSentences ?? true
     );
-  }, [activeDocument, settings.readingGranularity, settings.mergeShortSentences]);
+  }, [
+    activeDocument?.id,
+    activeDocument?.paragraphs,
+    activeDocument?.excludedSentenceIds,
+    settings.readingGranularity,
+    settings.mergeShortSentences,
+  ]);
 
   const currentSentenceIndex = activeDocument?.currentSentenceIndex ?? 0;
 
@@ -276,12 +285,14 @@ export default function App() {
   handleSentenceProgressRef.current = handleSentenceProgress;
 
   // Playback control handlers: starts reading from the remembered sentence position
-  const handlePlay = (fromIdx?: number) => {
+  const handlePlay = (fromIdx?: number | unknown) => {
     if (!speechEngineRef.current || !activeDocument) return;
     setVoiceErrorMessage(null);
     speechEngineRef.current.unlockAudio();
-    const targetIdx = fromIdx !== undefined ? fromIdx : (activeDocument.currentSentenceIndex ?? 0);
-    speechEngineRef.current.play(targetIdx);
+    const cleanIndex = typeof fromIdx === 'number' && !isNaN(fromIdx)
+      ? fromIdx
+      : (activeDocument.currentSentenceIndex ?? 0);
+    speechEngineRef.current.play(cleanIndex);
   };
 
   const handleRestartDocument = () => {
@@ -641,7 +652,7 @@ export default function App() {
 
       {/* Voice Error Notification Banner */}
       {voiceErrorMessage && (
-        <div className="fixed bottom-24 sm:bottom-28 left-1/2 -translate-x-1/2 z-50 max-w-lg w-[92%] bg-stone-900/98 border border-amber-500/60 text-stone-100 p-3.5 rounded-2xl shadow-2xl backdrop-blur-xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
+        <div className="fixed bottom-24 sm:bottom-28 left-1/2 -translate-x-1/2 z-50 max-w-xl w-[94%] bg-stone-900/98 border border-amber-500/60 text-stone-100 p-3 sm:p-4 rounded-2xl shadow-2xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
               <AlertTriangle className="w-5 h-5" />
@@ -651,7 +662,7 @@ export default function App() {
               <p className="text-[11px] text-stone-300 leading-snug">{voiceErrorMessage}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto flex-wrap">
             <button
               onClick={() => {
                 setVoiceErrorMessage(null);
@@ -660,6 +671,35 @@ export default function App() {
               className="px-3 py-1.5 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 cursor-pointer shadow-xs transition-colors"
             >
               Reintentar
+            </button>
+            <button
+              onClick={() => {
+                setVoiceErrorMessage(null);
+                // Rotate to next voice
+                const voiceList: ReaderSettings['geminiVoice'][] = ['Kore', 'Fenrir', 'Charon', 'Puck', 'Zephyr'];
+                const nextIdx = (voiceList.indexOf(settings.geminiVoice) + 1) % voiceList.length;
+                handleSelectVoice(voiceList[nextIdx]);
+                setTimeout(() => handlePlay(), 150);
+              }}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 cursor-pointer border border-stone-700 transition-colors"
+              title="Cambiar a la siguiente voz natural disponible"
+            >
+              Cambiar Voz
+            </button>
+            <button
+              onClick={() => {
+                setVoiceErrorMessage(null);
+                const offlineSettings: ReaderSettings = { ...settings, voiceEngine: 'browser' };
+                setSettings(offlineSettings);
+                if (speechEngineRef.current) {
+                  speechEngineRef.current.updateSettings(offlineSettings);
+                  setTimeout(() => speechEngineRef.current?.play(), 100);
+                }
+              }}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 cursor-pointer border border-amber-500/30 transition-colors"
+              title="Usar síntesis de voz del navegador sin conexión"
+            >
+              Voz Offline
             </button>
             <button
               onClick={() => setVoiceErrorMessage(null)}
@@ -681,7 +721,7 @@ export default function App() {
           totalSentences={sentences.length}
           currentParagraphIndex={activeDocument.currentParagraphIndex ?? 0}
           totalParagraphs={activeDocument.paragraphs?.length ?? 1}
-          onPlay={handlePlay}
+          onPlay={() => handlePlay()}
           onPause={handlePause}
           onNext={handleNext}
           onPrevious={handlePrevious}
@@ -693,6 +733,7 @@ export default function App() {
           isOnline={isOnline}
           onSelectVoice={handleSelectVoice}
           onToggleGaucho={handleToggleGaucho}
+          onOpenQuotaModal={() => setQuotaModalOpen(true)}
         />
       )}
 
@@ -744,6 +785,18 @@ export default function App() {
           settings={settings}
         />
       )}
+
+      <QuotaInfoModal
+        isOpen={quotaModalOpen}
+        onClose={() => setQuotaModalOpen(false)}
+        onSwitchToUnlimitedSystem={() => {
+          setSettings((s) => ({
+            ...s,
+            voicePersistenceMode: 'system_unlimited',
+            voiceEngine: 'browser',
+          }));
+        }}
+      />
 
     </div>
   );

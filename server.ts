@@ -494,7 +494,6 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
       });
     }
 
-    // Strategy: gemini-3.8-flash-lite-tts (ultra-responsive < 2s for fluid reading), fallback to gemini-3.8-flash-tts
     const candidateModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
     let lastError: any = null;
     let base64Audio: string | null = null;
@@ -502,24 +501,12 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
     for (const model of candidateModels) {
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('TTS API timeout exceeded')), 12000)
+          setTimeout(() => reject(new Error('TTS API timeout exceeded')), 6500)
         );
 
         const apiPromise = ai.models.generateContent({
           model,
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  text: cleanText,
-                  speechMetadata: {
-                    style: dynamicStyle,
-                  },
-                },
-              ],
-            },
-          ],
+          contents: cleanText,
           config: {
             responseModalities: ['AUDIO'],
             speechConfig: {
@@ -551,6 +538,7 @@ app.post('/api/gemini/tts', aiRateLimiter, async (req: Request, res: Response) =
       res.setHeader('Content-Type', 'application/json');
       return res.status(503).json({
         error: lastError?.message || 'Servicio de voz con IA no disponible temporalmente.',
+        details: lastError?.message,
         fallbackToBrowser: true,
       });
     }

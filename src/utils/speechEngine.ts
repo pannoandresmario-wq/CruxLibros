@@ -30,6 +30,7 @@ export class SpeechEngine {
   private isCancelled: boolean = false;
   private isPrebuffering: Set<number> = new Set();
   private playGenerationId: number = 0;
+  private playbackSafetyTimer: any = null;
 
   // Gaucho Guitar Accompaniment
   private guitarAccompanist: GauchoGuitarAccompanist | null = null;
@@ -42,18 +43,35 @@ export class SpeechEngine {
       settings.guitarTempo ?? 70
     );
 
+    console.info('[SpeechEngine:Init] Instance created with configuration:', {
+      engine: settings.voiceEngine,
+      geminiVoice: settings.geminiVoice,
+      voiceStyleMode: settings.voiceStyleMode,
+      language: settings.language,
+      guitarAccompaniment: settings.guitarAccompaniment,
+      playbackSpeed: settings.playbackSpeed,
+    });
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       this.synthesis = window.speechSynthesis;
       // Preload available browser voices
       this.synthesis.getVoices();
       this.synthesis.onvoiceschanged = () => {
-        this.synthesis?.getVoices();
+        const voices = this.synthesis?.getVoices() || [];
+        console.info(`[SpeechEngine:Browser] Voices loaded dynamically: ${voices.length} available.`);
       };
     }
   }
 
   public updateCallbacks(newCallbacks: SpeechEngineCallbacks) {
     this.callbacks = { ...this.callbacks, ...newCallbacks };
+  }
+
+  private clearPlaybackSafetyTimer() {
+    if (this.playbackSafetyTimer) {
+      clearTimeout(this.playbackSafetyTimer);
+      this.playbackSafetyTimer = null;
+    }
   }
 
   /**
@@ -65,9 +83,15 @@ export class SpeechEngine {
       if (AudioCtx) {
         if (!this.audioContext) {
           this.audioContext = new AudioCtx();
+          console.info('[SpeechEngine:UnlockAudio] New AudioContext initialized.');
         }
+        console.info(`[SpeechEngine:UnlockAudio] AudioContext state: "${this.audioContext.state}".`);
         if (this.audioContext.state === 'suspended') {
-          this.audioContext.resume().catch(() => {});
+          this.audioContext.resume().then(() => {
+            console.info('[SpeechEngine:UnlockAudio] AudioContext resumed successfully.');
+          }).catch((err) => {
+            console.warn('[SpeechEngine:UnlockAudio] AudioContext resume failed:', err);
+          });
         }
         // Play an inaudible 1-sample buffer to satisfy autoplay policies
         const buffer = this.audioContext.createBuffer(1, 1, 22050);
@@ -86,10 +110,11 @@ export class SpeechEngine {
           const primer = new SpeechSynthesisUtterance('');
           primer.volume = 0;
           this.synthesis.speak(primer);
+          console.info('[SpeechEngine:UnlockAudio] SpeechSynthesis primed with zero-volume utterance.');
         } catch {}
       }
     } catch (e) {
-      console.warn('AudioContext unlock notice:', e);
+      console.warn('[SpeechEngine:UnlockAudio] Exception during unlock:', e);
     }
   }
 
@@ -152,11 +177,11 @@ export class SpeechEngine {
   }
 
   public setSentences(sentences: SentenceItem[], startIndex: number = 0) {
-    this.stopPlaybackOnly();
     this.sentences = sentences;
-    this.currentSentenceIndex = Math.max(0, Math.min(startIndex, Math.max(0, sentences.length - 1)));
-    this.audioCache.clear();
-    this.isPrebuffering.clear();
+    // Only update starting position if stopped; do not abort active playback
+    if (this.status === 'stopped') {
+      this.currentSentenceIndex = Math.max(0, Math.min(startIndex, Math.max(0, sentences.length - 1)));
+    }
   }
 
   public getCurrentSentenceIndex(): number {
@@ -178,14 +203,16 @@ export class SpeechEngine {
       this.synthesis.cancel();
     }
 
-    if (this.sentences.length === 0) {
+    if (!this.sentences || this.sentences.length === 0) {
       console.warn('SpeechEngine: No sentences loaded');
       this.setStatus('stopped');
       return;
     }
 
-    let targetIdx = fromIndex !== undefined ? fromIndex : this.currentSentenceIndex;
-    if (targetIdx < 0 || targetIdx >= this.sentences.length) {
+    let targetIdx = typeof fromIndex === 'number' && !isNaN(fromIndex) 
+      ? fromIndex 
+      : this.currentSentenceIndex;
+    if (typeof targetIdx !== 'number' || isNaN(targetIdx) || targetIdx < 0 || targetIdx >= this.sentences.length) {
       targetIdx = 0;
     }
 
@@ -206,15 +233,19 @@ export class SpeechEngine {
       }
     }
 
+    // Auto-recovery: If all sentences were marked excluded, un-exclude them automatically so reading proceeds
     if (found === -1) {
-      this.setStatus('stopped');
-      this.callbacks.onError?.('Todas las oraciones están marcadas como excluidas para la lectura.');
-      return;
+      for (let i = 0; i < this.sentences.length; i++) {
+        if (this.sentences[i]) {
+          this.sentences[i].excluded = false;
+        }
+      }
+      found = targetIdx >= 0 && targetIdx < this.sentences.length ? targetIdx : 0;
     }
 
     this.currentSentenceIndex = found;
 
-    if (this.status === 'paused' && fromIndex === undefined) {
+    if (this.status === 'paused' && typeof fromIndex !== 'number') {
       this.resume();
       return;
     }
@@ -233,12 +264,36 @@ export class SpeechEngine {
     const currentSentence = this.sentences[this.currentSentenceIndex];
     const textToSpeak = currentSentence ? currentSentence.text.trim() : '';
 
+    console.info(`[SpeechEngine:Play] Starting playback for sentence index ${found} (target: ${targetIdx}). Engine: "${this.settings.voiceEngine}", Voice: "${this.settings.geminiVoice}", Style: "${this.settings.voiceStyleMode}". Text: "${textToSpeak.slice(0, 45)}..."`);
+
     if (!textToSpeak) {
+      console.info('[SpeechEngine:Play] Empty sentence text, advancing to next.');
       this.next();
       return;
     }
 
-    if (this.settings.voiceEngine === 'gemini') {
+    // 5-second buffer / AudioContext timeout mechanism: triggers error handler and fallback if audio doesn't start in 5s
+    this.clearPlaybackSafetyTimer();
+    this.playbackSafetyTimer = setTimeout(() => {
+      if (this.playGenerationId === currentGeneration && (this.status === 'buffering' || this.status === 'stopped')) {
+        const isContextSuspended = this.audioContext?.state === 'suspended';
+        console.warn(`[SpeechEngine:TimeoutWatchdog] 5-second timeout reached! Audio buffers failed to load or AudioContext remained suspended. AudioContext state: "${this.audioContext?.state || 'none'}"`);
+        const errorMsg = isContextSuspended
+          ? 'El contexto de audio permanece suspendido por el navegador. Toca la pantalla para reanudar el audio.'
+          : 'El audio demoró más de 5 segundos en cargar. Conmutando a la voz del sistema...';
+        this.callbacks.onError?.(errorMsg);
+        if (this.settings.voiceEngine === 'gemini') {
+          console.info('[SpeechEngine:TimeoutWatchdog] Auto-falling back to browser speech synthesis.');
+          this.playBrowserTTS(textToSpeak);
+        } else {
+          this.setStatus('stopped');
+        }
+      }
+    }, 5000);
+
+    const shouldUseGemini = (this.settings.voicePersistenceMode === 'ai_prefer_cloud') && (this.settings.voiceEngine === 'gemini');
+
+    if (shouldUseGemini) {
       await this.playGeminiTTS(textToSpeak, this.currentSentenceIndex);
     } else {
       this.playBrowserTTS(textToSpeak);
@@ -246,7 +301,9 @@ export class SpeechEngine {
   }
 
   public pause() {
+    console.info(`[SpeechEngine:Pause] Pausing playback at sentence ${this.currentSentenceIndex}.`);
     this.isCancelled = true;
+    this.clearPlaybackSafetyTimer();
 
     if (this.abortController) {
       this.abortController.abort();
@@ -267,6 +324,7 @@ export class SpeechEngine {
   }
 
   public resume() {
+    console.info(`[SpeechEngine:Resume] Resuming playback at sentence ${this.currentSentenceIndex}.`);
     this.unlockAudio();
     this.isCancelled = false;
 
@@ -293,13 +351,16 @@ export class SpeechEngine {
   }
 
   public stop() {
+    console.info('[SpeechEngine:Stop] Stopping all audio playback.');
     this.isCancelled = true;
+    this.clearPlaybackSafetyTimer();
     this.guitarAccompanist?.stop();
     this.stopPlaybackOnly();
     this.setStatus('stopped');
   }
 
   private stopPlaybackOnly() {
+    this.clearPlaybackSafetyTimer();
     this.clearChromeKeepAlive();
 
     if (this.abortController) {
@@ -309,11 +370,15 @@ export class SpeechEngine {
 
     if (this.currentAudioElement) {
       try {
+        const prevSrc = this.currentAudioElement.src;
         this.currentAudioElement.pause();
         this.currentAudioElement.currentTime = 0;
         this.currentAudioElement.onended = null;
         this.currentAudioElement.onerror = null;
         this.currentAudioElement.onplay = null;
+        if (prevSrc && prevSrc.startsWith('blob:')) {
+          URL.revokeObjectURL(prevSrc);
+        }
       } catch {}
       this.currentAudioElement = null;
     }
@@ -374,7 +439,10 @@ export class SpeechEngine {
 
   // --- Browser Web Speech API with Distinct Voice Fidelity & Anti-Freeze Watchdog ---
   private playBrowserTTS(text: string) {
+    console.info(`[SpeechEngine:Browser] Preparing Web Speech API playback for text: "${text.slice(0, 45)}..."`);
+
     if (!this.synthesis) {
+      console.warn('[SpeechEngine:Browser] window.speechSynthesis not supported in this browser.');
       this.callbacks.onError?.('La síntesis de voz no está soportada en este navegador.');
       this.setStatus('stopped');
       return;
@@ -384,6 +452,7 @@ export class SpeechEngine {
 
     try {
       if (this.synthesis.speaking || this.synthesis.pending) {
+        console.info('[SpeechEngine:Browser] Cancelling existing speaking/pending utterances.');
         this.synthesis.cancel();
       }
       this.synthesis.resume();
@@ -399,14 +468,16 @@ export class SpeechEngine {
       this.settings.geminiVoice === 'Charon' ||
       this.settings.geminiVoice === 'Puck';
 
-    const targetLang = this.settings.language || 'es-ES';
+    const targetLang = isGaucho ? 'es-AR' : (this.settings.language || 'es-ES');
     utterance.lang = targetLang.includes('-') ? targetLang : `${targetLang}-${targetLang.toUpperCase()}`;
     utterance.volume = Math.min(1, this.settings.voiceVolume);
 
     // 1. Precise Pitch & Speed Configuration according to described persona
     if (isGaucho) {
-      utterance.pitch = 0.65; // Deep resonant gaucho baritone
-      utterance.rate = Math.max(0.6, Math.min(1.4, this.settings.playbackSpeed * 0.88));
+      // Much deeper, resonant baritone with slow, rhythmic payada pampeana cadence
+      utterance.pitch = 0.56;
+      utterance.rate = Math.max(0.60, Math.min(1.2, this.settings.playbackSpeed * 0.80));
+      console.info(`[SpeechEngine:Browser] Configured Gaucho payador vocal profile: Pitch=${utterance.pitch}, Rate=${utterance.rate}`);
     } else {
       switch (this.settings.geminiVoice) {
         case 'Fenrir':
@@ -433,12 +504,26 @@ export class SpeechEngine {
       }
     }
 
-    // 2. Select appropriate male vs female browser voice
+    // 2. Select appropriate voice (prioritizing authentic Argentine voice in Gaucho mode)
     const voices = this.synthesis.getVoices();
+    console.info(`[SpeechEngine:Browser] Evaluating ${voices.length} available voices in browser.`);
+
     if (voices && voices.length > 0) {
       if (this.settings.selectedBrowserVoiceURI) {
         const found = voices.find((v) => v.voiceURI === this.settings.selectedBrowserVoiceURI);
         if (found) utterance.voice = found;
+      }
+
+      if (!utterance.voice && isGaucho) {
+        // Prioritize native Argentine Spanish voices (es-AR, Argentina, Diego, etc.)
+        const argentineVoice =
+          voices.find((v) => v.lang.toLowerCase() === 'es-ar' || v.lang.toLowerCase() === 'es_ar') ||
+          voices.find((v) => /argentin|pampa|gaucho|buenos|rioplat/i.test(v.name)) ||
+          voices.find((v) => /diego|pablo|jorge|gonzalo/i.test(v.name) && v.lang.startsWith('es'));
+        if (argentineVoice) {
+          utterance.voice = argentineVoice;
+          console.info(`[SpeechEngine:Browser] Selected Argentine voice for Gaucho: "${argentineVoice.name}" (${argentineVoice.lang})`);
+        }
       }
 
       if (!utterance.voice) {
@@ -464,6 +549,12 @@ export class SpeechEngine {
       }
     }
 
+    if (utterance.voice) {
+      console.info(`[SpeechEngine:Browser] Final voice assigned: "${utterance.voice.name}" [${utterance.voice.lang}]`);
+    } else {
+      console.info(`[SpeechEngine:Browser] Using default system voice for lang "${utterance.lang}"`);
+    }
+
     // 3. Anti-Freeze Watchdog: guarantees status becomes 'playing' and never hangs
     const bufferingWatchdog = setTimeout(() => {
       if (!this.isCancelled && this.status === 'buffering') {
@@ -473,17 +564,21 @@ export class SpeechEngine {
 
     utterance.onstart = () => {
       clearTimeout(bufferingWatchdog);
+      this.clearPlaybackSafetyTimer();
       if (this.isCancelled) {
         this.synthesis?.cancel();
         return;
       }
+      console.info('[SpeechEngine:Browser] onstart: Speech has started audibly in the browser.');
       this.setStatus('playing');
       this.startChromeKeepAlive();
     };
 
     utterance.onend = () => {
       clearTimeout(bufferingWatchdog);
+      this.clearPlaybackSafetyTimer();
       this.clearChromeKeepAlive();
+      console.info('[SpeechEngine:Browser] onend: Sentence playback completed.');
       if (this.status === 'playing' && !this.isCancelled) {
         this.next();
       }
@@ -491,11 +586,13 @@ export class SpeechEngine {
 
     utterance.onerror = (e) => {
       clearTimeout(bufferingWatchdog);
+      this.clearPlaybackSafetyTimer();
       this.clearChromeKeepAlive();
       if (e.error === 'interrupted' || e.error === 'canceled' || this.isCancelled) {
+        console.info(`[SpeechEngine:Browser] Utterance halted normally: ${e.error}`);
         return;
       }
-      console.warn('SpeechSynthesis error:', e);
+      console.warn('[SpeechEngine:Browser] onerror: SpeechSynthesis error encountered:', e.error);
       this.setStatus('stopped');
     };
 
@@ -506,10 +603,12 @@ export class SpeechEngine {
         return;
       }
       try {
+        console.info(`[SpeechEngine:Browser] Executing window.speechSynthesis.speak()...`);
         this.synthesis.speak(utterance);
       } catch (err) {
         clearTimeout(bufferingWatchdog);
-        console.warn('Browser speech speak failed:', err);
+        this.clearPlaybackSafetyTimer();
+        console.warn('[SpeechEngine:Browser] SpeechSynthesis.speak() invocation threw error:', err);
         this.setStatus('stopped');
       }
     }, 25);
@@ -535,24 +634,24 @@ export class SpeechEngine {
   // --- Style Prompt Provider (Guarantees identical vocal persona across all sentences) ---
   private getStylePrompt(voice: string, styleMode: string): string {
     if (styleMode === 'gaucho') {
-      return 'Voz masculina campera y profunda de gaucho payador tradicional de la pampa argentina, tono grave, pausado y sentido, con la cadencia criolla de recitar versos camperos';
+      return 'Eres un auténtico gaucho payador tradicional de la pampa criolla argentina. Recita y declama con voz campera muy profunda, grave, sentida y cantada al estilo de una payada milonguera tradicional de pulpería, respetando la cadencia y los versos gauchos.';
     }
     switch (voice) {
       case 'Fenrir':
-        return 'Voz masculina profunda, grave y firme de locutor profesional en español';
+        return 'Eres un locutor profesional. Lee en español con voz masculina profunda, seria, firme y resonante.';
       case 'Charon':
-        return 'Voz masculina solemne, baja, calmada y académica en español';
+        return 'Eres un narrador académico. Lee en español con voz masculina pausada, solemne, reflexiva y calmada.';
       case 'Puck':
-        return 'Voz masculina dinámica, vivaz, brillante y enérgica en español';
+        return 'Eres un orador jovial y vivaz. Lee en español con voz masculina dinámica, brillante, ágil y entusiasta.';
       case 'Zephyr':
-        return 'Voz femenina suave, dulce, reflexiva y calmada en español';
+        return 'Eres una narradora tranquila. Lee en español con voz femenina dulce, suave, pausada y relajante.';
       case 'Kore':
       default:
-        return 'Voz femenina cálida, natural, expresiva y clara en español';
+        return 'Eres una locutora profesional. Lee en español con voz femenina clara, cálida, expresiva y natural.';
     }
   }
 
-  // --- Gemini Natural Voice TTS with Generous Timeout & Seamless Continuation ---
+  // --- Gemini Natural Voice TTS with Watchdog Timeout & Reliable Playback ---
   private async playGeminiTTS(text: string, index: number) {
     const currentGeneration = this.playGenerationId;
     this.abortController = new AbortController();
@@ -562,17 +661,23 @@ export class SpeechEngine {
     const stylePrompt = this.getStylePrompt(voiceToUse, this.settings.voiceStyleMode);
     const cacheKey = `${index}_${voiceToUse}_${this.settings.voiceStyleMode}`;
 
-    // Synthesis timeout (14s)
+    console.info(`[SpeechEngine:Gemini] Starting TTS generation for sentence ${index}. Target voice: "${voiceToUse}", Style: "${this.settings.voiceStyleMode}"`);
+
+    // Synthesis watchdog timeout (8s maximum wait time for network call)
+    let didTimeout = false;
     const fetchTimeoutTimer = setTimeout(() => {
       if (this.abortController && this.playGenerationId === currentGeneration) {
+        didTimeout = true;
+        console.warn(`[SpeechEngine:Gemini] Network fetch timed out after 8s for sentence ${index}`);
         this.abortController.abort();
       }
-    }, 14000);
+    }, 8000);
 
     try {
       let audioBase64 = this.audioCache.get(cacheKey);
 
       if (!audioBase64) {
+        console.info(`[SpeechEngine:Gemini] Cache MISS for key "${cacheKey}". Sending POST to /api/gemini/tts...`);
         const response = await fetch('/api/gemini/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -586,14 +691,39 @@ export class SpeechEngine {
 
         clearTimeout(fetchTimeoutTimer);
 
-        if (this.isCancelled || this.playGenerationId !== currentGeneration) return;
+        if (this.isCancelled || this.playGenerationId !== currentGeneration) {
+          console.info('[SpeechEngine:Gemini] Request completed but operation was cancelled by user.');
+          return;
+        }
 
         const contentType = response.headers.get('content-type') || '';
+        console.info(`[SpeechEngine:Gemini] Server responded with HTTP ${response.status} (${contentType})`);
+
         if (!response.ok) {
           let errMsg = `Error del servidor HTTP ${response.status}`;
+          let fallbackToBrowser = false;
+          let quotaExceeded = false;
           if (contentType.includes('application/json')) {
             const errData = await response.json().catch(() => null);
-            if (errData?.error) errMsg = errData.error;
+            if (errData?.error) {
+              errMsg = errData.error;
+              if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+                quotaExceeded = true;
+              }
+            }
+            if (errData?.fallbackToBrowser) fallbackToBrowser = true;
+          }
+
+          if (fallbackToBrowser || quotaExceeded) {
+            console.warn('[SpeechEngine:Gemini] Server indicated fallback to browser voice (Quota or availability limit reached):', errMsg.slice(0, 120));
+            this.clearPlaybackSafetyTimer();
+            this.callbacks.onError?.(
+              quotaExceeded
+                ? 'Límite de cuota gratuita diaria de Gemini TTS alcanzado (10 peticiones/día). Conmutando automáticamente a la voz del sistema sin interrupciones.'
+                : 'Servicio de voz AI temporalmente no disponible. Usando voz del sistema.'
+            );
+            this.playBrowserTTS(text);
+            return;
           }
           throw new Error(errMsg);
         }
@@ -606,21 +736,33 @@ export class SpeechEngine {
         audioBase64 = data?.audioBase64;
         if (audioBase64) {
           this.audioCache.set(cacheKey, audioBase64);
+          console.info(`[SpeechEngine:Gemini] Successfully received base64 audio and cached under "${cacheKey}".`);
         }
       } else {
         clearTimeout(fetchTimeoutTimer);
+        console.info(`[SpeechEngine:Gemini] Cache HIT for key "${cacheKey}". Reusing cached audio immediately.`);
       }
 
-      if (this.isCancelled || this.playGenerationId !== currentGeneration) return;
+      if (this.isCancelled || this.playGenerationId !== currentGeneration) {
+        console.info('[SpeechEngine:Gemini] Playback aborted before decoding audio.');
+        return;
+      }
 
       if (!audioBase64) {
         throw new Error('No se recibió audio válido');
       }
 
-      const audioSrc = `data:audio/wav;base64,${audioBase64}`;
+      const binaryString = window.atob(audioBase64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let b = 0; b < binaryString.length; b++) {
+        bytes[b] = binaryString.charCodeAt(b);
+      }
+      const audioBlob = new Blob([bytes], { type: 'audio/wav' });
+      const audioSrc = URL.createObjectURL(audioBlob);
+      console.info(`[SpeechEngine:Gemini] Converted base64 to Blob URL (${bytes.length} bytes): ${audioSrc}`);
+
       const audio = new Audio(audioSrc);
       this.currentAudioElement = audio;
-
       audio.playbackRate = this.settings.playbackSpeed;
 
       // Direct native volume for reliable browser playback
@@ -649,55 +791,71 @@ export class SpeechEngine {
       }
 
       audio.onplay = () => {
+        this.clearPlaybackSafetyTimer();
         if (this.isCancelled || this.playGenerationId !== currentGeneration) {
           audio.pause();
           return;
         }
+        console.info(`[SpeechEngine:Gemini] onplay event fired! Audio is playing audibly.`);
         this.setStatus('playing');
         // Proactively prebuffer the next 2 upcoming sentences with the same voice and style
         this.prebufferPipelined(index + 1, 2);
       };
 
       audio.onended = () => {
+        this.clearPlaybackSafetyTimer();
+        console.info(`[SpeechEngine:Gemini] onended event fired for sentence ${index}. Advancing to next.`);
         if (this.status === 'playing' && !this.isCancelled && this.playGenerationId === currentGeneration) {
           this.next();
         }
       };
 
       audio.onerror = () => {
+        this.clearPlaybackSafetyTimer();
         if (this.isCancelled || this.playGenerationId !== currentGeneration) return;
-        console.warn('Audio playback error on sentence:', text.slice(0, 40));
-        this.stopPlaybackOnly();
-        this.setStatus('paused');
-        this.callbacks.onError?.('Ocurrió un error con la voz seleccionada. Por favor, intenta nuevamente o cambia de voz.');
+        console.warn(`[SpeechEngine:Gemini] Audio element onerror fired on sentence ${index}. Falling back to browser TTS.`);
+        this.playBrowserTTS(text);
       };
 
       if (!this.isCancelled && this.status !== 'paused' && this.playGenerationId === currentGeneration) {
         try {
+          console.info('[SpeechEngine:Gemini] Calling audio.play()...');
           await audio.play();
+          this.clearPlaybackSafetyTimer();
           this.setStatus('playing');
           this.prebufferPipelined(index + 1, 2);
         } catch (playErr: any) {
           if (playErr?.name === 'AbortError' || this.isCancelled || this.playGenerationId !== currentGeneration) {
+            console.info('[SpeechEngine:Gemini] audio.play() was aborted by user action.');
             return;
           }
-          console.warn('HTMLAudio play rejected:', playErr);
-          this.stopPlaybackOnly();
-          this.setStatus('paused');
-          this.callbacks.onError?.('Ocurrió un error con la voz seleccionada. Por favor, intenta nuevamente o cambia de voz.');
+          console.warn('[SpeechEngine:Gemini] HTMLAudio play rejected (possible browser iframe policy):', playErr);
+          this.clearPlaybackSafetyTimer();
+          this.playBrowserTTS(text);
         }
       }
     } catch (err: any) {
       clearTimeout(fetchTimeoutTimer);
-      if (this.isCancelled || this.playGenerationId !== currentGeneration || err?.name === 'AbortError') {
-        // Cancelled or superseded: silently discard
+      this.clearPlaybackSafetyTimer();
+      if (this.isCancelled || this.playGenerationId !== currentGeneration) {
+        // User explicitly paused or stopped
         return;
       }
 
-      console.warn('Gemini TTS error:', err?.message);
-      this.stopPlaybackOnly();
-      this.setStatus('paused');
-      this.callbacks.onError?.('Ocurrió un error con la voz seleccionada. Por favor, intenta nuevamente o cambia de voz.');
+      if (didTimeout) {
+        console.warn('[SpeechEngine:Gemini] Request timed out. Auto-falling back to browser voice.');
+        this.callbacks.onError?.('La síntesis demoró demasiado. Continuando con la voz del sistema.');
+        this.playBrowserTTS(text);
+        return;
+      }
+
+      if (err?.name === 'AbortError') {
+        return;
+      }
+
+      console.warn('[SpeechEngine:Gemini] Gemini TTS error, falling back to browser voice:', err?.message);
+      this.callbacks.onError?.('Error con la voz con IA. Continuando con la voz del sistema.');
+      this.playBrowserTTS(text);
     }
   }
 

@@ -413,7 +413,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             <div className="flex items-center gap-2 shrink-0">
               {!isPlaying && onPlayFromSaved && (
                 <button
-                  onClick={onPlayFromSaved}
+                  onClick={() => onPlayFromSaved()}
                   className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-all active:scale-95"
                 >
                   <Play className="w-3.5 h-3.5 fill-current" />
